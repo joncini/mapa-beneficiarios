@@ -105,7 +105,7 @@
 
   <div class="filter-bar">
     <label>Proyecto:</label>
-    <select id="f-proyecto" onchange="renderAll()"><option value="">Todos</option></select>
+    <select id="f-proyecto" onchange="onProyectoChange()"><option value="">Todos</option></select>
     <label>Municipio:</label>
     <select id="f-municipio" onchange="renderAll()"><option value="">Todos</option></select>
     <label style="margin-left:auto;">Última actualización:</label>
@@ -409,22 +409,38 @@ function renderAll() {
   renderFirma(data, "FIRMA 3 ALCALDIA", "ch-firma3", "f3-si", "f3-no");
 }
 
+function updateMunicipioOptions(proyId) {
+  var source = proyId
+    ? ALL_DATA.filter(function(d){ return d.Proyecto_ID === proyId; })
+    : ALL_DATA;
+  var mun = {};
+  source.forEach(function(d){ if (d.MUNICIPIO) mun[d.MUNICIPIO] = true; });
+  var mSel = document.getElementById("f-municipio");
+  var prev = mSel.value;
+  mSel.innerHTML = '<option value="">Todos</option>';
+  Object.keys(mun).sort().forEach(function(k){
+    var o = document.createElement("option"); o.value=k; o.textContent=k; mSel.appendChild(o);
+  });
+  if (mun[prev]) mSel.value = prev;
+}
+
+function onProyectoChange() {
+  var proyId = document.getElementById("f-proyecto").value;
+  updateMunicipioOptions(proyId);
+  renderAll();
+}
+
 function populateFilters() {
-  var proy = {}, mun = {};
+  var proy = {};
   ALL_DATA.forEach(function(d){
     if (d.Proyecto_ID) proy[d.Proyecto_ID] = PROYECTO_LABELS[d.Proyecto_ID] || d.Proyecto_ID;
-    if (d.MUNICIPIO) mun[d.MUNICIPIO] = d.MUNICIPIO;
   });
   var pSel = document.getElementById("f-proyecto");
   pSel.innerHTML = '<option value="">Todos</option>';
   Object.keys(proy).sort().forEach(function(k){
     var o = document.createElement("option"); o.value=k; o.textContent=proy[k]; pSel.appendChild(o);
   });
-  var mSel = document.getElementById("f-municipio");
-  mSel.innerHTML = '<option value="">Todos</option>';
-  Object.keys(mun).sort().forEach(function(k){
-    var o = document.createElement("option"); o.value=k; o.textContent=k; mSel.appendChild(o);
-  });
+  updateMunicipioOptions("");
 }
 
 function loadData() {
