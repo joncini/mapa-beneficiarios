@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mapa de Beneficiarios — Mejoramiento de Viviendas</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  :root{
+    --bg-primary:#0f172a;--bg-secondary:#1e293b;--bg-tertiary:#334155;
+    --text-primary:#f1f5f9;--text-secondary:#94a3b8;--text-muted:#64748b;
+    --border:#1e293b;--accent:#3b82f6;--radius:10px;
+  }
+  body{background:var(--bg-primary);color:var(--text-primary);
+       font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+       height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+
+  /* ── HEADER ── */
+  .header{background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);
+          border-bottom:1px solid var(--border);padding:12px 24px;
+          display:flex;align-items:center;justify-content:space-between;flex-shrink:0;z-index:600;}
+  .header-left{display:flex;align-items:center;gap:16px;}
+  .logo{font-size:17px;font-weight:800;letter-spacing:-.3px;}
+  .logo span{color:var(--accent);}
+  .logo small{font-size:11px;font-weight:400;color:var(--text-muted);display:block;margin-top:1px;}
+  .header-stats{display:flex;gap:8px;flex-wrap:wrap;}
+  .chip{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);
+        padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;
+        display:flex;align-items:center;gap:5px;white-space:nowrap;}
+  .chip b{font-size:14px;}
+  .header-right{display:flex;gap:8px;align-items:center;}
+  .btn{padding:6px 14px;border:none;border-radius:6px;font-size:11px;font-weight:700;
+       cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:4px;}
+  .btn-accent{background:var(--accent);color:#fff;}
+  .btn-accent:hover{background:#2563eb;}
+  .btn-ghost{background:rgba(255,255,255,.06);color:var(--text-secondary);border:1px solid var(--bg-tertiary);}
+  .btn-ghost:hover{background:var(--bg-tertiary);color:var(--text-primary);}
+  .btn-ghost.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+
+  /* ── TOOLBAR ── */
+  .toolbar{background:var(--bg-primary);border-bottom:1px solid var(--border);
+           padding:8px 24px;display:flex;gap:8px;align-items:center;flex-shrink:0;
+           flex-wrap:wrap;z-index:500;}
+  .toolbar select,.toolbar input{background:var(--bg-secondary);color:var(--text-primary);
+    border:1px solid var(--bg-tertiary);border-radius:6px;padding:6px 10px;font-size:12px;outline:none;}
+  .toolbar select:focus,.toolbar input:focus{border-color:var(--accent);}
+  .toolbar input{min-width:200px;flex:1;max-width:320px;}
+  .estado-legend{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto;}
+  .legend-item{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-muted);
+               cursor:pointer;padding:2px 8px;border-radius:12px;border:1px solid transparent;transition:all .15s;}
+  .legend-item:hover{border-color:var(--bg-tertiary);background:rgba(255,255,255,.04);}
+  .legend-item.dimmed{opacity:.3;}
+  .legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+
+  /* ── MAIN ── */
+  .main{display:flex;flex:1;overflow:hidden;position:relative;}
+  #map{flex:1;z-index:0;}
+
+  /* ── SIDE PANEL ── */
+  .side-panel{width:0;overflow:hidden;background:var(--bg-primary);border-left:1px solid var(--border);
+              transition:width .3s cubic-bezier(.4,0,.2,1);flex-shrink:0;display:flex;flex-direction:column;}
+  .side-panel.open{width:380px;}
+  @media(max-width:768px){.side-panel.open{width:100%;position:absolute;right:0;top:0;bottom:0;z-index:800;}}
+  .sp-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;
+             align-items:flex-start;justify-content:space-between;flex-shrink:0;}
+  .sp-title{font-size:14px;font-weight:700;}
+  .sp-subtitle{font-size:11px;color:var(--text-muted);margin-top:2px;}
+  .sp-close{background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;
+            padding:0 4px;line-height:1;}
+  .sp-close:hover{color:var(--text-primary);}
+  .sp-body{flex:1;overflow-y:auto;padding:16px 20px;}
+  .sp-section{margin-bottom:20px;}
+  .sp-section-title{font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;
+                    letter-spacing:1px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
+  .sp-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .sp-field{background:var(--bg-secondary);border-radius:8px;padding:10px 12px;}
+  .sp-field.full{grid-column:span 2;}
+  .sp-field label{font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase;
+                  letter-spacing:.8px;display:block;margin-bottom:3px;}
+  .sp-field span{font-size:13px;color:var(--text-primary);font-weight:500;}
+  .sp-field span.empty{color:var(--text-muted);font-style:italic;font-weight:400;font-size:11px;}
+  .estado-tag{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;
+              font-size:12px;font-weight:700;letter-spacing:.3px;}
+  .diagnostico-tag{display:inline-block;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;}
+  .diag-viable{background:#22c55e22;color:#4ade80;border:1px solid #22c55e44;}
+  .diag-inviable{background:#ef444422;color:#f87171;border:1px solid #ef444444;}
+  .service-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;
+                 font-size:11px;font-weight:600;margin-right:4px;margin-bottom:4px;}
+  .svc-yes{background:#22c55e18;color:#4ade80;border:1px solid #22c55e33;}
+  .svc-no{background:#ef444418;color:#f87171;border:1px solid #ef444433;}
+
+  /* ── POPUP ── */
+  .leaflet-popup-content-wrapper{background:var(--bg-secondary);color:var(--text-primary);
+    border:1px solid var(--bg-tertiary);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.5);}
+  .leaflet-popup-tip{background:var(--bg-secondary);}
+  .leaflet-popup-content{margin:12px 16px;font-size:12px;line-height:1.5;}
+  .popup-name{font-size:14px;font-weight:700;margin-bottom:4px;}
+  .popup-loc{color:var(--text-muted);font-size:11px;margin-bottom:8px;}
+  .popup-row{display:flex;justify-content:space-between;padding:3px 0;font-size:12px;}
+  .popup-row span:first-child{color:var(--text-muted);}
+  .popup-btn{display:block;width:100%;margin-top:10px;padding:8px;background:var(--accent);
+             color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;
+             text-align:center;}
+  .popup-btn:hover{background:#2563eb;}
+
+  /* ── COUNTER BADGE ── */
+  .cluster-icon{background:var(--accent);color:#fff;border-radius:50%;width:36px;height:36px;
+                display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;
+                border:3px solid rgba(59,130,246,.3);box-shadow:0 2px 8px rgba(0,0,0,.4);}
+
+  /* ── LOADING ── */
+  .loading-overlay{position:fixed;inset:0;background:var(--bg-primary);z-index:9999;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+    transition:opacity .4s;}
+  .loading-overlay.hidden{opacity:0;pointer-events:none;}
+  .loader{width:40px;height:40px;border:3px solid var(--bg-tertiary);border-top-color:var(--accent);
+          border-radius:50%;animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loading-text{font-size:13px;color:var(--text-muted);}
+
+  /* scrollbar */
+  ::-webkit-scrollbar{width:5px;}
+  ::-webkit-scrollbar-track{background:var(--bg-primary);}
+  ::-webkit-scrollbar-thumb{background:var(--bg-tertiary);border-radius:3px;}
+
+  /* Leaflet overrides */
+  .leaflet-control-zoom a{background:var(--bg-secondary)!important;color:var(--text-primary)!important;
+    border-color:var(--bg-tertiary)!important;}
+  .leaflet-control-zoom a:hover{background:var(--bg-tertiary)!important;}
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loading">
+  <div class="loader"></div>
+  <div class="loading-text">Cargando beneficiarios desde Google Sheets...</div>
+</div>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo">
+      Viviendas <span>Antioquia</span>
+      <small>Mapa de Beneficiarios — Mejoramiento de Viviendas</small>
+    </div>
+  </div>
+  <div class="header-stats">
+    <div class="chip">Total: <b id="st-total">—</b></div>
+    <div class="chip" style="color:#4ade80;">Viables: <b id="st-viables">—</b></div>
+    <div class="chip" style="color:#f87171;">Inviables: <b id="st-inviables">—</b></div>
+    <div class="chip" style="color:#fbbf24;">Municipios: <b id="st-municipios">—</b></div>
+  </div>
+  <div class="header-right">
+    <button class="btn btn-ghost" onclick="reloadData()" title="Recargar datos del Sheet">&#x21BB; Actualizar</button>
+  </div>
+</div>
+
+<!-- TOOLBAR -->
+<div class="toolbar">
+  <select id="sel-proyecto" onchange="applyFilters()">
+    <option value="">Todos los proyectos</option>
+  </select>
+  <select id="sel-municipio" onchange="applyFilters()">
+    <option value="">Todos los municipios</option>
+  </select>
+  <select id="sel-estado" onchange="applyFilters()">
+    <option value="">Todos los estados</option>
+  </select>
+  <select id="sel-diagnostico" onchange="applyFilters()">
+    <option value="">Diagnóstico</option>
+    <option value="VIABLE">Viable</option>
+    <option value="INVIABLE">Inviable</option>
+  </select>
+  <input id="search-input" type="text" placeholder="Buscar beneficiario, vereda, ID..."
+         oninput="applyFilters()">
+  <div class="estado-legend" id="estado-legend"></div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+  <div id="map"></div>
+  <div class="side-panel" id="side-panel">
+    <div class="sp-header">
+      <div>
+        <div class="sp-title" id="sp-title">—</div>
+        <div class="sp-subtitle" id="sp-subtitle">—</div>
+      </div>
+      <button class="sp-close" onclick="closePanel()">&#x2715;</button>
+    </div>
+    <div class="sp-body" id="sp-body"></div>
+  </div>
+</div>
+
+<script>
+// ── CONFIG ──
+var SHEET_ID = "1XO5fl4hqh7iREDY6cTLpZoLkqJBUhk5-6nWWEpkOE08";
+var SHEET_NAME = "01_Beneficiario";
+var SHEET_URL = "https://docs.google.com/spreadsheets/d/" + SHEET_ID +
+                "/gviz/tq?tqx=out:csv&sheet=" + encodeURIComponent(SHEET_NAME);
+
+// ── ESTADO COLORS ──
+var ESTADO_CONFIG = {
+  "VISITADO":      {color:"#3b82f6", icon:"&#x1F4CD;", bg:"#3b82f622", border:"#3b82f644"},
+  "APROBADO":      {color:"#22c55e", icon:"&#x2705;",  bg:"#22c55e22", border:"#22c55e44"},
+  "RECHAZADO":     {color:"#ef4444", icon:"&#x274C;",  bg:"#ef444422", border:"#ef444444"},
+  "EN EJECUCIÓN":  {color:"#f59e0b", icon:"&#x1F6A7;", bg:"#f59e0b22", border:"#f59e0b44"},
+  "EN EJECUCION":  {color:"#f59e0b", icon:"&#x1F6A7;", bg:"#f59e0b22", border:"#f59e0b44"},
+  "EN STAND BY":   {color:"#a855f7", icon:"&#x23F8;",  bg:"#a855f722", border:"#a855f744"},
+  "EJECUTADO":     {color:"#06b6d4", icon:"&#x2705;",  bg:"#06b6d422", border:"#06b6d444"},
+  "FACTURADO":     {color:"#10b981", icon:"&#x1F4B0;", bg:"#10b98122", border:"#10b98144"},
+};
+var DEFAULT_ESTADO = {color:"#64748b", icon:"&#x2B24;", bg:"#64748b22", border:"#64748b44"};
+
+// ── GLOBALS ──
+var ALL_DATA = [];
+var _filtered = [];
+var _map, _markers = [];
+var _selectedMarker = null;
+
+// ── PROYECTO LABELS (auto-detected from CTTO column) ──
+var PROYECTO_LABELS = {};
+
+// ── PARSE CSV (handles newlines inside quoted fields) ──
+function parseCSV(text) {
+  var records = [];
+  var current = "";
+  var inQuotes = false;
+  var fields = [];
+  var headers = null;
+
+  for (var i = 0; i < text.length; i++) {
+    var c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (i + 1 < text.length && text[i + 1] === '"') {
+          current += '"'; i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        // Replace embedded newlines with space to keep header names clean
+        current += (c === '\n' || c === '\r') ? ' ' : c;
+      }
+    } else {
+      if (c === '"') {
+        inQuotes = true;
+      } else if (c === ',') {
+        fields.push(current.trim()); current = "";
+      } else if (c === '\n' || c === '\r') {
+        if (c === '\r' && i + 1 < text.length && text[i + 1] === '\n') i++;
+        fields.push(current.trim()); current = "";
+        if (fields.length > 1 || fields[0] !== "") {
+          if (!headers) {
+            headers = fields;
+          } else {
+            var obj = {};
+            for (var j = 0; j < headers.length; j++) {
+              obj[headers[j]] = fields[j] || "";
+            }
+            records.push(obj);
+          }
+        }
+        fields = [];
+      } else {
+        current += c;
+      }
+    }
+  }
+  // Last record
+  if (current || fields.length) {
+    fields.push(current.trim());
+    if (headers && (fields.length > 1 || fields[0] !== "")) {
+      var obj = {};
+      for (var j = 0; j < headers.length; j++) {
+        obj[headers[j]] = fields[j] || "";
+      }
+      records.push(obj);
+    }
+  }
+  return records;
+}
+
+// ── PARSE DMS COORDINATES ──
+function parseDMS(coordStr) {
+  if (!coordStr) return null;
+  var s = coordStr.replace(/\s+/g, " ").trim();
+  // Normalize all quote-like characters to standard ASCII
+  s = s.replace(/[‘’´`′]/g, "'");  // smart single quotes → '
+  s = s.replace(/[“”″]/g, '"');                // smart double quotes → "
+  // Match: 6°58'02.9"N 75°07'50.4"W  (flexible separators)
+  var re = /(\d+)\s*[°]\s*(\d+)\s*[']\s*([\d.]+)\s*["]\s*([NS])\s+(\d+)\s*[°]\s*(\d+)\s*[']\s*([\d.]+)\s*["]\s*([EW])/i;
+  var m = s.match(re);
+  if (!m) return null;
+  var latD = parseFloat(m[1]) + parseFloat(m[2]) / 60 + parseFloat(m[3]) / 3600;
+  var lngD = parseFloat(m[5]) + parseFloat(m[6]) / 60 + parseFloat(m[7]) / 3600;
+  if (m[4].toUpperCase() === "S") latD = -latD;
+  if (m[8].toUpperCase() === "W") lngD = -lngD;
+  return {lat: latD, lng: lngD};
+}
+
+// ── CREATE MARKER ICON ──
+function createMarkerIcon(estado) {
+  var cfg = ESTADO_CONFIG[(estado || "").toUpperCase()] || DEFAULT_ESTADO;
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">' +
+    '<defs><filter id="s" x="-20%" y="-10%" width="140%" height="130%">' +
+    '<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity=".4"/></filter></defs>' +
+    '<path d="M14 0C6.27 0 0 6.27 0 14c0 10.5 14 22 14 22s14-11.5 14-22C28 6.27 21.73 0 14 0z" ' +
+    'fill="' + cfg.color + '" filter="url(#s)" opacity=".92"/>' +
+    '<circle cx="14" cy="13" r="6" fill="#fff" opacity=".95"/>' +
+    '<circle cx="14" cy="13" r="3.5" fill="' + cfg.color + '"/>' +
+    '</svg>';
+  return L.divIcon({
+    className: "",
+    html: svg,
+    iconSize: [28, 36],
+    iconAnchor: [14, 36],
+    popupAnchor: [0, -36]
+  });
+}
+
+// ── BUILD POPUP ──
+function buildPopup(d) {
+  var cfg = ESTADO_CONFIG[(d.ESTADO || "").toUpperCase()] || DEFAULT_ESTADO;
+  var estado = d.ESTADO || "Sin estado";
+  return '<div style="min-width:220px;">' +
+    '<div class="popup-name">' + (d["NOMBRE BENEFICIARIO"] || "—") + '</div>' +
+    '<div class="popup-loc">' + [d.VEREDA, d.MUNICIPIO].filter(Boolean).join(", ") + '</div>' +
+    '<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">' +
+      '<span class="estado-tag" style="background:' + cfg.bg + ';color:' + cfg.color + ';border:1px solid ' + cfg.border + ';font-size:11px;padding:3px 10px;">' + estado + '</span>' +
+      (d.DIAGNOSTICO ? '<span class="diagnostico-tag ' + (d.DIAGNOSTICO === 'VIABLE' ? 'diag-viable' : 'diag-inviable') + '">' + d.DIAGNOSTICO + '</span>' : '') +
+    '</div>' +
+    '<div class="popup-row"><span>ID Ficha</span><span style="font-weight:600;">' + (d.ID_FICHA || "—") + '</span></div>' +
+    '<div class="popup-row"><span>Módulo</span><span>' + (d.MODULO || "—") + '</span></div>' +
+    '<div class="popup-row"><span>Zona</span><span>' + (d.ZONA || "—") + '</span></div>' +
+    '<button class="popup-btn" onclick="openPanel(\'' + encodeURIComponent(d.ID_FICHA || "") + '\')">Ver detalle completo &#x2192;</button>' +
+  '</div>';
+}
+
+// ── SIDE PANEL ──
+function openPanel(idFichaEnc) {
+  var idFicha = decodeURIComponent(idFichaEnc);
+  var d = ALL_DATA.filter(function(x) { return x.ID_FICHA === idFicha; })[0];
+  if (!d) return;
+
+  var cfg = ESTADO_CONFIG[(d.ESTADO || "").toUpperCase()] || DEFAULT_ESTADO;
+  document.getElementById("sp-title").textContent = d["NOMBRE BENEFICIARIO"] || "—";
+  document.getElementById("sp-subtitle").textContent = d.ID_FICHA || "";
+
+  var v = function(val) { return val || '<span class="empty">Sin datos</span>'; };
+
+  var html = '';
+
+  // Estado section
+  html += '<div class="sp-section">' +
+    '<div class="sp-section-title">Estado del Proyecto</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">' +
+      '<span class="estado-tag" style="background:' + cfg.bg + ';color:' + cfg.color + ';border:1px solid ' + cfg.border + ';">' +
+        cfg.icon + ' ' + (d.ESTADO || "Sin estado") + '</span>' +
+      (d.DIAGNOSTICO ? '<span class="diagnostico-tag ' + (d.DIAGNOSTICO === 'VIABLE' ? 'diag-viable' : 'diag-inviable') + '">' + d.DIAGNOSTICO + '</span>' : '') +
+    '</div>' +
+  '</div>';
+
+  // Ubicación
+  html += '<div class="sp-section">' +
+    '<div class="sp-section-title">Ubicación</div>' +
+    '<div class="sp-grid">' +
+      '<div class="sp-field"><label>Municipio</label><span>' + v(d.MUNICIPIO) + '</span></div>' +
+      '<div class="sp-field"><label>Zona</label><span>' + v(d.ZONA) + '</span></div>' +
+      '<div class="sp-field"><label>Vereda</label><span>' + v(d.VEREDA) + '</span></div>' +
+      '<div class="sp-field"><label>Corregimiento</label><span>' + v(d.CORREGIMIENTO) + '</span></div>' +
+      '<div class="sp-field full"><label>Punto de Referencia</label><span>' + v(d["PUNTO DE REFERENCIA"]) + '</span></div>' +
+      '<div class="sp-field full"><label>Coordenadas</label><span style="font-family:monospace;font-size:12px;">' + v(d.COORDENADAS) + '</span></div>' +
+    '</div>' +
+  '</div>';
+
+  // Acceso y distancias
+  html += '<div class="sp-section">' +
+    '<div class="sp-section-title">Acceso y Distancias</div>' +
+    '<div class="sp-grid">' +
+      '<div class="sp-field"><label>Dist. Vehicular (km)</label><span>' + v(d.DIST_VEHICULAR_KM) + '</span></div>' +
+      '<div class="sp-field"><label>Tiempo Vehicular (min)</label><span>' + v(d.DIST_VEHICULAR_MIN) + '</span></div>' +
+      '<div class="sp-field"><label>Dist. Mular (km)</label><span>' + v(d.DIST_MULAR_KM) + '</span></div>' +
+      '<div class="sp-field"><label>Tiempo Mular (min)</label><span>' + v(d.DIST_MULAR_MIN) + '</span></div>' +
+      '<div class="sp-field full"><label>Tipo de Acceso</label><span>' + v(d["TIPO DE ACCESO"]) + '</span></div>' +
+    '</div>' +
+  '</div>';
+
+  // Servicios
+  html += '<div class="sp-section">' +
+    '<div class="sp-section-title">Servicios Públicos</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+  var servicios = [
+    {label:"Agua", val:d.TIENE_AGUA},
+    {label:"Energía", val:d.TIENE_ENERGIA},
+    {label:"Alcantarillado", val:d.TIENE_ALCANTARILLADO}
+  ];
+  servicios.forEach(function(s) {
+    var yes = (s.val || "").toUpperCase() === "SI" || (s.val || "").toUpperCase() === "SÍ";
+    var cls = s.val ? (yes ? "svc-yes" : "svc-no") : "";
+    var icon = s.val ? (yes ? "&#x2705;" : "&#x274C;") : "&#x2754;";
+    html += '<span class="service-badge ' + cls + '">' + icon + ' ' + s.label + (s.val ? ': ' + s.val : '') + '</span>';
+  });
+  html += '</div></div>';
+
+  // Datos del beneficiario
+  html += '<div class="sp-section">' +
+    '<div class="sp-section-title">Datos del Beneficiario</div>' +
+    '<div class="sp-grid">' +
+      '<div class="sp-field"><label>Identificación</label><span>' + v(d.IDENTIFICACION_BENEF) + '</span></div>' +
+      '<div class="sp-field"><label>Edad</label><span>' + v(d.EDAD_BENEF) + '</span></div>' +
+      '<div class="sp-field"><label>Teléfono</label><span>' + v(d.TELEFONO_BENEF) + '</span></div>' +
+      '<div class="sp-field"><label>Email</label><span>' + v(d.EMAIL_BENEF) + '</span></div>' +
+      '<div class="sp-field"><label>Ficha SISBEN</label><span>' + v(d.FICHA_SISBEN) + '</span></div>' +
+      '<div class="sp-field"><label>Módulo</label><span>' + v(d.MODULO) + '</span></div>' +
+    '</div>' +
+  '</div>';
+
+  // Info adicional
+  html += '<div class="sp-section">' +
+    '<div class="sp-section-title">Información Adicional</div>' +
+    '<div class="sp-grid">' +
+      '<div class="sp-field"><label>Proyecto</label><span>' + v(d.CTTO || PROYECTO_LABELS[d.Proyecto_ID] || d.Proyecto_ID) + '</span></div>' +
+      '<div class="sp-field"><label>ID Proyecto</label><span>' + v(d.Proyecto_ID) + '</span></div>' +
+      '<div class="sp-field"><label>Diseño Inicial</label><span>' + v(d["DISEÑO INICIAL"]) + '</span></div>' +
+      '<div class="sp-field"><label>Puntual</label><span>' + v(d.PUNTUAL) + '</span></div>' +
+      '<div class="sp-field"><label>Registrado por</label><span>' + v(d["REGISTRADO POR"]) + '</span></div>' +
+      '<div class="sp-field"><label>Fecha Registro</label><span>' + v(d["FECHA REGISTRO"]) + '</span></div>' +
+    '</div>' +
+  '</div>';
+
+  // Google Maps link
+  var coord = parseDMS(d.COORDENADAS);
+  if (coord) {
+    html += '<div class="sp-section">' +
+      '<a href="https://www.google.com/maps?q=' + coord.lat + ',' + coord.lng + '" target="_blank" ' +
+      'style="display:block;width:100%;padding:10px;background:var(--bg-secondary);color:var(--accent);' +
+      'border:1px solid var(--bg-tertiary);border-radius:8px;text-align:center;text-decoration:none;' +
+      'font-size:12px;font-weight:700;">&#x1F5FA; Abrir en Google Maps</a>' +
+    '</div>';
+  }
+
+  document.getElementById("sp-body").innerHTML = html;
+  document.getElementById("side-panel").classList.add("open");
+  setTimeout(function() { _map.invalidateSize(); }, 350);
+}
+
+function closePanel() {
+  document.getElementById("side-panel").classList.remove("open");
+  setTimeout(function() { _map.invalidateSize(); }, 350);
+}
+
+// ── RENDER MARKERS ──
+function clearMarkers() {
+  _markers.forEach(function(m) { _map.removeLayer(m); });
+  _markers = [];
+}
+
+function renderMarkers(data) {
+  clearMarkers();
+  var bounds = [];
+  data.forEach(function(d) {
+    var coord = parseDMS(d.COORDENADAS);
+    if (!coord) return;
+    var marker = L.marker([coord.lat, coord.lng], {
+      icon: createMarkerIcon(d.ESTADO)
+    }).addTo(_map);
+    marker.bindPopup(buildPopup(d), {maxWidth: 300, className: ""});
+    marker._benefData = d;
+    bounds.push([coord.lat, coord.lng]);
+    _markers.push(marker);
+  });
+  if (bounds.length) {
+    _map.fitBounds(bounds, {padding: [50, 50], maxZoom: 13});
+  }
+}
+
+// ── FILTERS ──
+function applyFilters() {
+  var proyecto = document.getElementById("sel-proyecto").value;
+  var municipio = document.getElementById("sel-municipio").value;
+  var estado = document.getElementById("sel-estado").value;
+  var diagnostico = document.getElementById("sel-diagnostico").value;
+  var search = (document.getElementById("search-input").value || "").toLowerCase();
+
+  _filtered = ALL_DATA.filter(function(d) {
+    if (proyecto && d.Proyecto_ID !== proyecto) return false;
+    if (municipio && d.MUNICIPIO !== municipio) return false;
+    if (estado && (d.ESTADO || "").toUpperCase() !== estado.toUpperCase()) return false;
+    if (diagnostico && (d.DIAGNOSTICO || "").toUpperCase() !== diagnostico.toUpperCase()) return false;
+    if (search) {
+      var hay = [d["NOMBRE BENEFICIARIO"], d.VEREDA, d.MUNICIPIO, d.ID_FICHA,
+                 d.CORREGIMIENTO, d.IDENTIFICACION_BENEF, d["PUNTO DE REFERENCIA"]].join(" ").toLowerCase();
+      if (hay.indexOf(search) === -1) return false;
+    }
+    return true;
+  });
+
+  renderMarkers(_filtered);
+  updateStats(_filtered);
+}
+
+// ── POPULATE SELECTS ──
+function populateFilters(data) {
+  var proyectos = {}, municipios = {}, estados = {};
+  data.forEach(function(d) {
+    if (d.Proyecto_ID) proyectos[d.Proyecto_ID] = (proyectos[d.Proyecto_ID] || 0) + 1;
+    if (d.MUNICIPIO) municipios[d.MUNICIPIO] = (municipios[d.MUNICIPIO] || 0) + 1;
+    if (d.ESTADO) estados[(d.ESTADO || "").toUpperCase()] = (estados[(d.ESTADO || "").toUpperCase()] || 0) + 1;
+  });
+
+  var selProy = document.getElementById("sel-proyecto");
+  selProy.innerHTML = '<option value="">Todos los proyectos</option>';
+  Object.keys(proyectos).sort().forEach(function(p) {
+    var label = PROYECTO_LABELS[p] || p;
+    var opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = label + " (" + proyectos[p] + ")";
+    selProy.appendChild(opt);
+  });
+
+  var selMun = document.getElementById("sel-municipio");
+  selMun.innerHTML = '<option value="">Todos los municipios</option>';
+  Object.keys(municipios).sort().forEach(function(m) {
+    var opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m + " (" + municipios[m] + ")";
+    selMun.appendChild(opt);
+  });
+
+  var selEst = document.getElementById("sel-estado");
+  selEst.innerHTML = '<option value="">Todos los estados</option>';
+  Object.keys(estados).sort().forEach(function(e) {
+    var opt = document.createElement("option");
+    opt.value = e;
+    opt.textContent = e + " (" + estados[e] + ")";
+    selEst.appendChild(opt);
+  });
+
+  // Legend
+  var legend = document.getElementById("estado-legend");
+  legend.innerHTML = "";
+  Object.keys(ESTADO_CONFIG).forEach(function(key) {
+    // skip duplicates like "EN EJECUCION" vs "EN EJECUCIÓN"
+    if (key === "EN EJECUCION") return;
+    var cfg = ESTADO_CONFIG[key];
+    var item = document.createElement("div");
+    item.className = "legend-item";
+    item.innerHTML = '<div class="legend-dot" style="background:' + cfg.color + ';"></div>' + key;
+    item.onclick = function() {
+      document.getElementById("sel-estado").value = item.classList.contains("active-legend") ? "" : key;
+      document.querySelectorAll(".legend-item").forEach(function(el) { el.classList.remove("active-legend"); });
+      if (document.getElementById("sel-estado").value) item.classList.add("active-legend");
+      applyFilters();
+    };
+    legend.appendChild(item);
+  });
+}
+
+// ── STATS ──
+function updateStats(data) {
+  document.getElementById("st-total").textContent = data.length;
+  var viables = data.filter(function(d) { return (d.DIAGNOSTICO || "").toUpperCase() === "VIABLE"; }).length;
+  var inviables = data.filter(function(d) { return (d.DIAGNOSTICO || "").toUpperCase() === "INVIABLE"; }).length;
+  var municipios = {};
+  data.forEach(function(d) { if (d.MUNICIPIO) municipios[d.MUNICIPIO] = true; });
+  document.getElementById("st-viables").textContent = viables;
+  document.getElementById("st-inviables").textContent = inviables;
+  document.getElementById("st-municipios").textContent = Object.keys(municipios).length;
+}
+
+// ── LOAD DATA ──
+function loadData() {
+  document.getElementById("loading").classList.remove("hidden");
+  fetch(SHEET_URL)
+    .then(function(r) { return r.text(); })
+    .then(function(csv) {
+      ALL_DATA = parseCSV(csv).filter(function(d) {
+        return d.COORDENADAS && d.COORDENADAS.trim();
+      });
+
+      // Auto-detect proyecto labels from CTTO column (NORDESTE, OCCIDENTE, etc.)
+      PROYECTO_LABELS = {};
+      ALL_DATA.forEach(function(d) {
+        if (d.Proyecto_ID && d.CTTO && !PROYECTO_LABELS[d.Proyecto_ID]) {
+          PROYECTO_LABELS[d.Proyecto_ID] = d.CTTO;
+        }
+      });
+
+      populateFilters(ALL_DATA);
+      _filtered = ALL_DATA;
+      renderMarkers(ALL_DATA);
+      updateStats(ALL_DATA);
+      document.getElementById("loading").classList.add("hidden");
+    })
+    .catch(function(err) {
+      console.error("Error cargando datos:", err);
+      document.getElementById("loading").querySelector(".loading-text").textContent =
+        "Error al cargar datos. Verifica que el Sheet sea público.";
+    });
+}
+
+function reloadData() {
+  closePanel();
+  loadData();
+}
+
+// ── INIT MAP ──
+function initMap() {
+  _map = L.map("map", {
+    center: [6.8, -75.5],
+    zoom: 8,
+    zoomControl: true
+  });
+
+  // CartoDB Positron dark — clean, modern, up-to-date
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    attribution: '&copy; <a href="https://carto.com/">CARTO</a> &middot; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+    maxZoom: 19,
+    subdomains: "abcd"
+  }).addTo(_map);
+}
+
+// ── BOOTSTRAP ──
+initMap();
+loadData();
+
+// Auto-refresh every 5 minutes
+setInterval(function() { loadData(); }, 5 * 60 * 1000);
+</script>
+</body>
+</html>
