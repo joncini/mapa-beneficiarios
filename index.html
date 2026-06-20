@@ -151,7 +151,29 @@
     <div class="chip" style="color:#fde68a;">Municipios: <b id="st-municipios">—</b></div>
   </div>
   <div class="header-right">
+    <button class="btn btn-ghost" onclick="openAdminModal()">&#x2699; Columnas</button>
     <button class="btn btn-ghost" onclick="reloadData()">&#x21BB; Actualizar</button>
+  </div>
+</div>
+
+<div id="admin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;width:520px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,.3);">
+    <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-weight:700;font-size:15px;">Configurar columnas del panel</div>
+        <div style="font-size:11px;color:#64748b;margin-top:2px;">Marca las columnas que quieres mostrar en la vista de detalle</div>
+      </div>
+      <button onclick="closeAdminModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#64748b;">&#x2715;</button>
+    </div>
+    <div style="padding:14px 20px;border-bottom:1px solid #e2e8f0;display:flex;gap:8px;">
+      <button onclick="toggleAllColumns(true)" style="padding:6px 12px;border:1px solid #2563eb;background:#fff;color:#2563eb;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">Seleccionar todo</button>
+      <button onclick="toggleAllColumns(false)" style="padding:6px 12px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">Limpiar</button>
+    </div>
+    <div id="admin-cols-list" style="flex:1;overflow-y:auto;padding:14px 20px;"></div>
+    <div style="padding:14px 20px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px;">
+      <button onclick="closeAdminModal()" style="padding:8px 16px;background:#f1f5f9;border:1px solid #cbd5e1;color:#475569;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>
+      <button onclick="saveAdminConfig()" style="padding:8px 18px;background:#2563eb;border:none;color:#fff;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">Guardar</button>
+    </div>
   </div>
 </div>
 
@@ -332,18 +354,20 @@ function drawAllRoutes(data) {
     pending++;
 
     if (_routeCache[cacheKey]) {
-      L.geoJSON(_routeCache[cacheKey], { style: { color: "#1e40af", weight: 5, opacity: 0.85 } }).addTo(_allRoutesLayer);
+      L.geoJSON(_routeCache[cacheKey].geometry, { style: { color: "#1e40af", weight: 5, opacity: 0.85 } }).addTo(_allRoutesLayer);
       done++;
+      updateMarkerPopup(d, _routeCache[cacheKey]);
       return;
     }
 
     fetchRoute(center.lat, center.lng, coord.lat, coord.lng, function(err, route) {
       done++;
       if (err || !route) return;
-      _routeCache[cacheKey] = route.geometry;
+      _routeCache[cacheKey] = { geometry: route.geometry, distance: route.distance, duration: route.duration, raw: route };
       if (_allRoutesLayer) {
         L.geoJSON(route.geometry, { style: { color: "#1e40af", weight: 5, opacity: 0.85 } }).addTo(_allRoutesLayer);
       }
+      updateMarkerPopup(d, _routeCache[cacheKey]);
     });
   });
 }
@@ -358,8 +382,10 @@ function showRoute(d) {
   updateRouteUI("loading");
   clearRoute();
 
-  fetchRoute(center.lat, center.lng, coord.lat, coord.lng, function(err, route) {
+  var cacheKey = center.lat + "," + center.lng + "->" + coord.lat + "," + coord.lng;
+  var cb = function(err, route) {
     if (err) { updateRouteUI(err); return; }
+    if (!_routeCache[cacheKey]) _routeCache[cacheKey] = { geometry: route.geometry, distance: route.distance, duration: route.duration, raw: route };
 
     var geojson = route.geometry;
     _routeLayer = L.geoJSON(geojson, {
@@ -414,7 +440,9 @@ function showRoute(d) {
     '</div>';
 
     updateRouteUI(html);
-  });
+  };
+  if (_routeCache[cacheKey]) cb(null, _routeCache[cacheKey].raw || _routeCache[cacheKey]);
+  else fetchRoute(center.lat, center.lng, coord.lat, coord.lng, cb);
 }
 
 function updateRouteUI(content) {
@@ -428,21 +456,110 @@ function updateRouteUI(content) {
 var _currentPanelData = null;
 
 // ── POPUP ──
+function getRouteInfo(d) {
+  var coord = parseDMS(d.COORDENADAS);
+  if (!coord) return null;
+  var center = MUNI_CENTERS[(d.MUNICIPIO || "").toUpperCase()];
+  if (!center) return null;
+  var cacheKey = center.lat + "," + center.lng + "->" + coord.lat + "," + coord.lng;
+  return _routeCache[cacheKey] || null;
+}
+
 function buildPopup(d) {
   var cfg = ESTADO_CONFIG[(d.ESTADO || "").toUpperCase()] || DEFAULT_ESTADO;
   var estado = d.ESTADO || "Sin estado";
-  return '<div style="min-width:220px;">' +
+  var route = getRouteInfo(d);
+  var routeHtml = '';
+  if (route) {
+    var metros = Math.round(route.distance);
+    var minutos = Math.round(route.duration / 60);
+    routeHtml =
+      '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:8px;margin:8px 0;display:flex;gap:10px;justify-content:space-around;">' +
+        '<div style="text-align:center;"><div style="font-size:15px;font-weight:800;color:#1e40af;">' + metros.toLocaleString('es-CO') + ' m</div><div style="font-size:9px;color:#3b82f6;font-weight:700;text-transform:uppercase;">Distancia</div></div>' +
+        '<div style="text-align:center;"><div style="font-size:15px;font-weight:800;color:#1e40af;">' + minutos + ' min</div><div style="font-size:9px;color:#3b82f6;font-weight:700;text-transform:uppercase;">Tiempo</div></div>' +
+      '</div>';
+  } else {
+    routeHtml = '<div style="font-size:11px;color:#94a3b8;font-style:italic;margin:6px 0;">Calculando distancia...</div>';
+  }
+  return '<div style="min-width:240px;" data-popup-for="' + encodeURIComponent(d.ID_FICHA || "") + '">' +
     '<div class="popup-name">' + (d["NOMBRE BENEFICIARIO"] || "—") + '</div>' +
     '<div class="popup-loc">' + [d.VEREDA, d.MUNICIPIO].filter(Boolean).join(", ") + '</div>' +
-    '<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">' +
+    '<div style="display:flex;gap:6px;margin-bottom:4px;flex-wrap:wrap;">' +
       '<span class="estado-tag" style="background:' + cfg.bg + ';color:' + cfg.text + ';border:1px solid ' + cfg.border + ';font-size:11px;padding:3px 10px;">' + estado + '</span>' +
       (d.DIAGNOSTICO ? '<span class="diagnostico-tag ' + (d.DIAGNOSTICO === 'VIABLE' ? 'diag-viable' : 'diag-inviable') + '">' + d.DIAGNOSTICO + '</span>' : '') +
     '</div>' +
-    '<div class="popup-row"><span>ID Ficha</span><span style="font-weight:600;">' + (d.ID_FICHA || "—") + '</span></div>' +
-    '<div class="popup-row"><span>Módulo</span><span>' + (d.MODULO || "—") + '</span></div>' +
-    '<div class="popup-row"><span>Zona</span><span>' + (d.ZONA || "—") + '</span></div>' +
+    routeHtml +
     '<button class="popup-btn" onclick="openPanel(\'' + encodeURIComponent(d.ID_FICHA || "") + '\')">Ver detalle completo &#x2192;</button>' +
   '</div>';
+}
+
+function updateMarkerPopup(d, route) {
+  // Re-bind popup so cached distance/time shows next time it opens
+  for (var i = 0; i < _markers.length; i++) {
+    if (_markers[i]._benefData && _markers[i]._benefData.ID_FICHA === d.ID_FICHA) {
+      _markers[i].setPopupContent(buildPopup(d));
+      break;
+    }
+  }
+}
+
+// ── COLUMN ADMIN CONFIG ──
+// Columns hidden by default everywhere (IDs, special fields handled elsewhere)
+var HIDDEN_ALWAYS = ["ID_FICHA", "Proyecto_ID", "COORDENADAS", "ESTADO", "DIAGNOSTICO", "NOMBRE BENEFICIARIO"];
+var ALL_COLUMNS = [];
+var VISIBLE_COLUMNS = null; // null = show all detected columns
+
+function loadColumnConfig() {
+  try {
+    var saved = localStorage.getItem("mapa_visible_cols_v1");
+    if (saved) VISIBLE_COLUMNS = JSON.parse(saved);
+  } catch(e) {}
+}
+
+function saveColumnConfig(cols) {
+  VISIBLE_COLUMNS = cols;
+  try { localStorage.setItem("mapa_visible_cols_v1", JSON.stringify(cols)); } catch(e) {}
+}
+
+function getDisplayColumns() {
+  // Always show all detected columns minus hidden, unless user customized
+  var defaults = ALL_COLUMNS.filter(function(c) { return HIDDEN_ALWAYS.indexOf(c) === -1; });
+  if (!VISIBLE_COLUMNS) return defaults;
+  // Only return ones still present in the sheet (handles renamed/removed cols)
+  return VISIBLE_COLUMNS.filter(function(c) { return ALL_COLUMNS.indexOf(c) !== -1; });
+}
+
+function prettyLabel(col) {
+  return col.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function openAdminModal() {
+  var visible = getDisplayColumns();
+  var available = ALL_COLUMNS.filter(function(c) { return HIDDEN_ALWAYS.indexOf(c) === -1; });
+  var list = document.getElementById("admin-cols-list");
+  list.innerHTML = available.map(function(col, idx) {
+    var checked = visible.indexOf(col) !== -1 ? "checked" : "";
+    return '<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid #f1f5f9;cursor:pointer;font-size:13px;">' +
+      '<input type="checkbox" class="admin-col-cb" data-col="' + col.replace(/"/g, "&quot;") + '" ' + checked + ' style="width:16px;height:16px;cursor:pointer;">' +
+      '<span style="flex:1;">' + prettyLabel(col) + '</span>' +
+      '<code style="font-size:10px;color:#94a3b8;background:#f8fafc;padding:2px 6px;border-radius:3px;">' + col + '</code>' +
+    '</label>';
+  }).join("");
+  document.getElementById("admin-modal").style.display = "flex";
+}
+
+function closeAdminModal() { document.getElementById("admin-modal").style.display = "none"; }
+
+function toggleAllColumns(state) {
+  document.querySelectorAll(".admin-col-cb").forEach(function(cb) { cb.checked = state; });
+}
+
+function saveAdminConfig() {
+  var checked = [];
+  document.querySelectorAll(".admin-col-cb:checked").forEach(function(cb) { checked.push(cb.dataset.col); });
+  saveColumnConfig(checked);
+  closeAdminModal();
+  if (_currentPanelData) openPanel(encodeURIComponent(_currentPanelData.ID_FICHA));
 }
 
 // ── SIDE PANEL ──
@@ -455,7 +572,7 @@ function openPanel(idFichaEnc) {
 
   var cfg = ESTADO_CONFIG[(d.ESTADO || "").toUpperCase()] || DEFAULT_ESTADO;
   document.getElementById("sp-title").textContent = d["NOMBRE BENEFICIARIO"] || "—";
-  document.getElementById("sp-subtitle").textContent = d.ID_FICHA || "";
+  document.getElementById("sp-subtitle").textContent = [d.VEREDA, d.MUNICIPIO].filter(Boolean).join(", ");
   var v = function(val) { return val || '<span class="empty">Sin datos</span>'; };
   var html = '';
 
@@ -466,67 +583,35 @@ function openPanel(idFichaEnc) {
       (d.DIAGNOSTICO ? '<span class="diagnostico-tag '+(d.DIAGNOSTICO==='VIABLE'?'diag-viable':'diag-inviable')+'">'+d.DIAGNOSTICO+'</span>' : '') +
     '</div></div>';
 
-  // Route button/container
+  // Route container
   html += '<div class="sp-section" id="route-container">' +
     '<div class="route-loading"><div class="loader" style="width:16px;height:16px;border-width:2px;"></div> Calculando ruta...</div>' +
   '</div>';
   setTimeout(function(){ showRoute(d); }, 300);
 
-  // Ubicación
-  html += '<div class="sp-section"><div class="sp-section-title">Ubicación</div><div class="sp-grid">' +
-    '<div class="sp-field"><label>Municipio</label><span>'+v(d.MUNICIPIO)+'</span></div>' +
-    '<div class="sp-field"><label>Zona</label><span>'+v(d.ZONA)+'</span></div>' +
-    '<div class="sp-field"><label>Vereda</label><span>'+v(d.VEREDA)+'</span></div>' +
-    '<div class="sp-field"><label>Corregimiento</label><span>'+v(d.CORREGIMIENTO)+'</span></div>' +
-    '<div class="sp-field full"><label>Punto de Referencia</label><span>'+v(d["PUNTO DE REFERENCIA"])+'</span></div>' +
-    '<div class="sp-field full"><label>Coordenadas</label><span style="font-family:monospace;font-size:12px;">'+v(d.COORDENADAS)+'</span></div>' +
-  '</div></div>';
-
-  // Acceso y distancias
-  html += '<div class="sp-section"><div class="sp-section-title">Acceso y Distancias</div><div class="sp-grid">' +
-    '<div class="sp-field"><label>Dist. Vehicular (km)</label><span>'+v(d.DIST_VEHICULAR_KM)+'</span></div>' +
-    '<div class="sp-field"><label>Tiempo Vehicular (min)</label><span>'+v(d.DIST_VEHICULAR_MIN)+'</span></div>' +
-    '<div class="sp-field"><label>Dist. Mular (km)</label><span>'+v(d.DIST_MULAR_KM)+'</span></div>' +
-    '<div class="sp-field"><label>Tiempo Mular (min)</label><span>'+v(d.DIST_MULAR_MIN)+'</span></div>' +
-    '<div class="sp-field full"><label>Tipo de Acceso</label><span>'+v(d["TIPO DE ACCESO"])+'</span></div>' +
-  '</div></div>';
-
-  // Servicios
-  html += '<div class="sp-section"><div class="sp-section-title">Servicios Públicos</div><div style="display:flex;flex-wrap:wrap;gap:6px;">';
-  [{label:"Agua",val:d.TIENE_AGUA},{label:"Energía",val:d.TIENE_ENERGIA},{label:"Alcantarillado",val:d.TIENE_ALCANTARILLADO}].forEach(function(s){
-    var yes = (s.val||"").toUpperCase()==="SI"||(s.val||"").toUpperCase()==="SÍ";
-    var cls = s.val?(yes?"svc-yes":"svc-no"):"";
-    var icon = s.val?(yes?"&#x2705;":"&#x274C;"):"&#x2754;";
-    html += '<span class="service-badge '+cls+'">'+icon+' '+s.label+(s.val?': '+s.val:'')+'</span>';
-  });
-  html += '</div></div>';
-
-  // Datos del beneficiario
-  html += '<div class="sp-section"><div class="sp-section-title">Datos del Beneficiario</div><div class="sp-grid">' +
-    '<div class="sp-field"><label>Identificación</label><span>'+v(d.IDENTIFICACION_BENEF)+'</span></div>' +
-    '<div class="sp-field"><label>Edad</label><span>'+v(d.EDAD_BENEF)+'</span></div>' +
-    '<div class="sp-field"><label>Teléfono</label><span>'+v(d.TELEFONO_BENEF)+'</span></div>' +
-    '<div class="sp-field"><label>Email</label><span>'+v(d.EMAIL_BENEF)+'</span></div>' +
-    '<div class="sp-field"><label>Ficha SISBEN</label><span>'+v(d.FICHA_SISBEN)+'</span></div>' +
-    '<div class="sp-field"><label>Módulo</label><span>'+v(d.MODULO)+'</span></div>' +
-  '</div></div>';
-
-  // Info adicional
-  html += '<div class="sp-section"><div class="sp-section-title">Información Adicional</div><div class="sp-grid">' +
-    '<div class="sp-field"><label>Proyecto</label><span>'+v(d.CTTO||PROYECTO_LABELS[d.Proyecto_ID]||d.Proyecto_ID)+'</span></div>' +
-    '<div class="sp-field"><label>ID Proyecto</label><span>'+v(d.Proyecto_ID)+'</span></div>' +
-    '<div class="sp-field"><label>Diseño Inicial</label><span>'+v(d["DISEÑO INICIAL"])+'</span></div>' +
-    '<div class="sp-field"><label>Puntual</label><span>'+v(d.PUNTUAL)+'</span></div>' +
-    '<div class="sp-field"><label>Registrado por</label><span>'+v(d["REGISTRADO POR"])+'</span></div>' +
-    '<div class="sp-field"><label>Fecha Registro</label><span>'+v(d["FECHA REGISTRO"])+'</span></div>' +
-  '</div></div>';
+  // Dynamic fields from admin config
+  var displayCols = getDisplayColumns();
+  if (displayCols.length) {
+    html += '<div class="sp-section"><div class="sp-section-title">Detalles</div><div class="sp-grid">';
+    displayCols.forEach(function(col) {
+      var val = d[col];
+      // Special handling for service-like columns
+      if (col === "TIENE_AGUA" || col === "TIENE_ENERGIA" || col === "TIENE_ALCANTARILLADO") {
+        // Render as badge inside a full field for consistency
+      }
+      html += '<div class="sp-field"><label>' + prettyLabel(col) + '</label><span>' + v(val) + '</span></div>';
+    });
+    html += '</div></div>';
+  }
 
   var coord = parseDMS(d.COORDENADAS);
   if (coord) {
-    html += '<div class="sp-section"><a href="https://www.google.com/maps?q='+coord.lat+','+coord.lng+'" target="_blank" '+
+    html += '<div class="sp-section">' +
+      '<div class="sp-field full"><label>Coordenadas</label><span style="font-family:monospace;font-size:12px;">' + (d.COORDENADAS || "—") + '</span></div>' +
+      '<a href="https://www.google.com/maps?q='+coord.lat+','+coord.lng+'" target="_blank" '+
       'style="display:block;width:100%;padding:10px;background:var(--bg-primary);color:var(--accent);'+
       'border:1px solid var(--border);border-radius:8px;text-align:center;text-decoration:none;'+
-      'font-size:12px;font-weight:700;">&#x1F5FA; Abrir en Google Maps</a></div>';
+      'font-size:12px;font-weight:700;margin-top:10px;">&#x1F5FA; Abrir en Google Maps</a></div>';
   }
 
   document.getElementById("sp-body").innerHTML = html;
@@ -614,7 +699,9 @@ function updateStats(data) {
 function loadData() {
   document.getElementById("loading").classList.remove("hidden");
   fetch(SHEET_URL).then(function(r){return r.text();}).then(function(csv){
-    ALL_DATA = parseCSV(csv).filter(function(d){ return d.COORDENADAS && d.COORDENADAS.trim(); });
+    var parsed = parseCSV(csv);
+    ALL_DATA = parsed.filter(function(d){ return d.COORDENADAS && d.COORDENADAS.trim(); });
+    ALL_COLUMNS = parsed.length ? Object.keys(parsed[0]) : (ALL_DATA[0] ? Object.keys(ALL_DATA[0]) : []);
     PROYECTO_LABELS = {};
     ALL_DATA.forEach(function(d){ if(d.Proyecto_ID && d.CTTO && !PROYECTO_LABELS[d.Proyecto_ID]) PROYECTO_LABELS[d.Proyecto_ID]=d.CTTO; });
     populateFilters(ALL_DATA); _filtered=ALL_DATA; renderMarkers(ALL_DATA); updateStats(ALL_DATA);
@@ -635,6 +722,7 @@ function initMap() {
   }).addTo(_map);
 }
 
+loadColumnConfig();
 initMap();
 loadData();
 setInterval(function(){ loadData(); }, 5*60*1000);
