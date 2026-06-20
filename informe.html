@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Informe Gerencial — Viviendas Antioquia</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  :root{
+    --bg:#f8fafc; --card:#fff; --border:#e2e8f0;
+    --text:#0f172a; --muted:#64748b; --soft:#94a3b8;
+    --accent:#2563eb; --accent-2:#1e40af;
+    --green:#16a34a; --red:#dc2626; --amber:#d97706; --purple:#7c3aed; --cyan:#0891b2;
+  }
+  body{background:var(--bg);color:var(--text);
+       font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+       min-height:100vh;padding-bottom:40px;}
+
+  .header{background:linear-gradient(135deg,#1e3a8a 0%,#2563eb 100%);
+          padding:18px 28px;color:#fff;display:flex;align-items:center;justify-content:space-between;
+          flex-wrap:wrap;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);}
+  .header h1{font-size:20px;font-weight:800;letter-spacing:-.3px;}
+  .header h1 span{color:#93c5fd;}
+  .header .subtitle{font-size:11px;color:rgba(255,255,255,.7);margin-top:2px;}
+  .header-actions{display:flex;gap:8px;align-items:center;}
+  .header-actions a, .header-actions button{padding:8px 14px;background:rgba(255,255,255,.15);
+    border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:6px;font-size:12px;
+    font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:4px;}
+  .header-actions a:hover, .header-actions button:hover{background:rgba(255,255,255,.25);}
+
+  .container{max-width:1400px;margin:0 auto;padding:24px;}
+
+  .filter-bar{background:#fff;border:1px solid var(--border);border-radius:10px;
+              padding:12px 16px;margin-bottom:20px;display:flex;gap:10px;align-items:center;
+              flex-wrap:wrap;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+  .filter-bar label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
+  .filter-bar select, .filter-bar input{border:1px solid var(--border);border-radius:6px;
+    padding:6px 10px;font-size:12px;background:#fff;outline:none;color:var(--text);}
+  .filter-bar select:focus, .filter-bar input:focus{border-color:var(--accent);}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px;}
+  .kpi{background:var(--card);border:1px solid var(--border);border-radius:12px;
+       padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+  .kpi .label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;}
+  .kpi .value{font-size:32px;font-weight:800;color:var(--text);margin-top:4px;line-height:1;}
+  .kpi .sub{font-size:11px;color:var(--muted);margin-top:6px;}
+  .kpi.accent .value{color:var(--accent);}
+  .kpi.green .value{color:var(--green);}
+  .kpi.red .value{color:var(--red);}
+  .kpi.amber .value{color:var(--amber);}
+
+  .grid{display:grid;gap:16px;margin-bottom:20px;}
+  .grid-2{grid-template-columns:repeat(auto-fit,minmax(420px,1fr));}
+  .grid-3{grid-template-columns:repeat(auto-fit,minmax(300px,1fr));}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;
+        padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+  .card h3{font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;
+           display:flex;align-items:center;gap:6px;}
+  .card h3 small{color:var(--muted);font-weight:500;font-size:11px;margin-left:auto;}
+  .chart-wrap{position:relative;height:280px;}
+  .chart-wrap.lg{height:340px;}
+  .chart-wrap.sm{height:200px;}
+
+  .firma-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  .firma-card{background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;}
+  .firma-card h4{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;margin-bottom:8px;}
+  .firma-card .chart-wrap{height:140px;margin-bottom:8px;}
+  .firma-stats{display:flex;justify-content:space-around;font-size:11px;}
+  .firma-stats .si{color:var(--green);font-weight:700;}
+  .firma-stats .no{color:var(--red);font-weight:700;}
+
+  .loading-overlay{position:fixed;inset:0;background:#fff;z-index:9999;display:flex;
+    flex-direction:column;align-items:center;justify-content:center;gap:14px;transition:opacity .4s;}
+  .loading-overlay.hidden{opacity:0;pointer-events:none;}
+  .loader{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);
+          border-radius:50%;animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .loading-text{font-size:13px;color:var(--muted);}
+
+  .footer{text-align:center;color:var(--soft);font-size:11px;padding:20px;}
+  .footer a{color:var(--accent);text-decoration:none;}
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loading">
+  <div class="loader"></div>
+  <div class="loading-text">Cargando datos del proyecto...</div>
+</div>
+
+<div class="header">
+  <div>
+    <h1>Informe <span>Gerencial</span></h1>
+    <div class="subtitle">Viviendas Antioquia — Mejoramiento de Viviendas</div>
+  </div>
+  <div class="header-actions">
+    <a href="index.html">&#x1F5FA; Ver Mapa</a>
+    <button onclick="loadData()">&#x21BB; Actualizar</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="filter-bar">
+    <label>Proyecto:</label>
+    <select id="f-proyecto" onchange="renderAll()"><option value="">Todos</option></select>
+    <label>Municipio:</label>
+    <select id="f-municipio" onchange="renderAll()"><option value="">Todos</option></select>
+    <label style="margin-left:auto;">Última actualización:</label>
+    <span id="last-update" style="font-size:11px;color:var(--muted);font-weight:600;">—</span>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi accent"><div class="label">Total Beneficiarios</div><div class="value" id="k-total">—</div><div class="sub" id="k-total-sub">—</div></div>
+    <div class="kpi green"><div class="label">Viables</div><div class="value" id="k-viables">—</div><div class="sub" id="k-viables-sub">— %</div></div>
+    <div class="kpi red"><div class="label">Inviables</div><div class="value" id="k-inviables">—</div><div class="sub" id="k-inviables-sub">— %</div></div>
+    <div class="kpi amber"><div class="label">Sin Coordenadas</div><div class="value" id="k-sincoord">—</div><div class="sub">Registros pendientes</div></div>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Cantidades por Proyecto <small id="lbl-proy">—</small></h3>
+      <div class="chart-wrap"><canvas id="ch-proyecto"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Cantidades por Municipio <small id="lbl-mun">—</small></h3>
+      <div class="chart-wrap"><canvas id="ch-municipio"></canvas></div>
+    </div>
+  </div>
+
+  <div class="grid grid-3">
+    <div class="card">
+      <h3>Estados de Visitas</h3>
+      <div class="chart-wrap"><canvas id="ch-estado"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Tipos de Módulos</h3>
+      <div class="chart-wrap"><canvas id="ch-modulo"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Diseños</h3>
+      <div class="chart-wrap"><canvas id="ch-diseno"></canvas></div>
+    </div>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Visitas por Fecha <small id="lbl-fecha">—</small></h3>
+      <div class="chart-wrap lg"><canvas id="ch-fecha"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Firmas Recolectadas</h3>
+      <div class="firma-grid">
+        <div class="firma-card">
+          <h4>Firma 1<br><span style="font-weight:500;text-transform:none;">Beneficiario</span></h4>
+          <div class="chart-wrap"><canvas id="ch-firma1"></canvas></div>
+          <div class="firma-stats"><span class="si">SI: <b id="f1-si">0</b></span><span class="no">NO: <b id="f1-no">0</b></span></div>
+        </div>
+        <div class="firma-card">
+          <h4>Firma 2<br><span style="font-weight:500;text-transform:none;">Técnico</span></h4>
+          <div class="chart-wrap"><canvas id="ch-firma2"></canvas></div>
+          <div class="firma-stats"><span class="si">SI: <b id="f2-si">0</b></span><span class="no">NO: <b id="f2-no">0</b></span></div>
+        </div>
+        <div class="firma-card">
+          <h4>Firma 3<br><span style="font-weight:500;text-transform:none;">Alcaldía</span></h4>
+          <div class="chart-wrap"><canvas id="ch-firma3"></canvas></div>
+          <div class="firma-stats"><span class="si">SI: <b id="f3-si">0</b></span><span class="no">NO: <b id="f3-no">0</b></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">Informe generado automáticamente desde Google Sheets &middot; <a href="index.html">Volver al mapa</a></div>
+
+<script>
+var SHEET_ID = "1XO5fl4hqh7iREDY6cTLpZoLkqJBUhk5-6nWWEpkOE08";
+var SHEET_NAME = "01_Beneficiario";
+var SHEET_URL = "https://docs.google.com/spreadsheets/d/" + SHEET_ID +
+                "/gviz/tq?tqx=out:csv&sheet=" + encodeURIComponent(SHEET_NAME);
+
+var COLORS = ["#2563eb","#16a34a","#dc2626","#d97706","#7c3aed","#0891b2","#059669","#db2777","#0ea5e9","#84cc16","#f59e0b","#8b5cf6"];
+var ALL_DATA = [], PROYECTO_LABELS = {}, _charts = {};
+
+Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+Chart.defaults.font.size = 11;
+Chart.defaults.color = "#475569";
+Chart.defaults.plugins.legend.labels.boxWidth = 12;
+Chart.defaults.plugins.legend.labels.padding = 12;
+
+function parseCSV(text) {
+  var records = [], current = "", inQuotes = false, fields = [], headers = null;
+  for (var i = 0; i < text.length; i++) {
+    var c = text[i];
+    if (inQuotes) {
+      if (c === '"') { if (i+1 < text.length && text[i+1] === '"') { current += '"'; i++; } else { inQuotes = false; } }
+      else { current += (c === '\n' || c === '\r') ? ' ' : c; }
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { fields.push(current.trim()); current = ""; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && i+1 < text.length && text[i+1] === '\n') i++;
+        fields.push(current.trim()); current = "";
+        if (fields.length > 1 || fields[0] !== "") {
+          if (!headers) headers = fields;
+          else { var obj = {}; for (var j = 0; j < headers.length; j++) obj[headers[j]] = fields[j] || ""; records.push(obj); }
+        }
+        fields = [];
+      } else current += c;
+    }
+  }
+  if (current || fields.length) { fields.push(current.trim());
+    if (headers && (fields.length > 1 || fields[0] !== "")) { var obj = {}; for (var j = 0; j < headers.length; j++) obj[headers[j]] = fields[j] || ""; records.push(obj); }
+  }
+  return records;
+}
+
+var SPANISH_MONTHS = {ene:0,feb:1,mar:2,abr:3,may:4,jun:5,jul:6,ago:7,sep:8,sept:8,oct:9,nov:10,dic:11};
+function parseSheetDate(s) {
+  if (!s) return null;
+  s = String(s).trim(); if (!s) return null;
+  var sp = s.toLowerCase().match(/^(\d{1,2})[\s\-\/]+([a-z]+)[\s\-\/]+(\d{2,4})/);
+  if (sp) {
+    var m = SPANISH_MONTHS[sp[2].slice(0,4)] !== undefined ? SPANISH_MONTHS[sp[2].slice(0,4)] : SPANISH_MONTHS[sp[2].slice(0,3)];
+    if (m !== undefined) { var y = +sp[3]; if (y<100) y+=2000; return new Date(y, m, +sp[1]); }
+  }
+  var iso = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (iso) return new Date(+iso[1], +iso[2]-1, +iso[3]);
+  var d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function countBy(arr, fn) {
+  var out = {};
+  arr.forEach(function(d){ var k = fn(d); if (k!==undefined && k!==null && k!=="") out[k]=(out[k]||0)+1; });
+  return out;
+}
+
+function sortedEntries(obj, byCount) {
+  var entries = Object.keys(obj).map(function(k){ return [k, obj[k]]; });
+  if (byCount) entries.sort(function(a,b){ return b[1]-a[1]; });
+  else entries.sort(function(a,b){ return a[0].localeCompare(b[0]); });
+  return entries;
+}
+
+function makeChart(id, config) {
+  if (_charts[id]) _charts[id].destroy();
+  var ctx = document.getElementById(id);
+  if (!ctx) return;
+  _charts[id] = new Chart(ctx, config);
+}
+
+function getFiltered() {
+  var proy = document.getElementById("f-proyecto").value;
+  var mun = document.getElementById("f-municipio").value;
+  return ALL_DATA.filter(function(d){
+    if (proy && d.Proyecto_ID !== proy) return false;
+    if (mun && d.MUNICIPIO !== mun) return false;
+    return true;
+  });
+}
+
+function renderKPIs(data) {
+  var total = data.length;
+  var viables = data.filter(function(d){return (d.DIAGNOSTICO||"").toUpperCase()==="VIABLE";}).length;
+  var inviables = data.filter(function(d){return (d.DIAGNOSTICO||"").toUpperCase()==="INVIABLE";}).length;
+  var sinCoord = data.filter(function(d){return !d.COORDENADAS || !d.COORDENADAS.trim();}).length;
+  var conCoord = total - sinCoord;
+  document.getElementById("k-total").textContent = total;
+  document.getElementById("k-total-sub").textContent = conCoord + " geolocalizados";
+  document.getElementById("k-viables").textContent = viables;
+  document.getElementById("k-viables-sub").textContent = total ? Math.round(viables/total*100)+"% del total" : "0%";
+  document.getElementById("k-inviables").textContent = inviables;
+  document.getElementById("k-inviables-sub").textContent = total ? Math.round(inviables/total*100)+"% del total" : "0%";
+  document.getElementById("k-sincoord").textContent = sinCoord;
+}
+
+function renderProyecto(data) {
+  var counts = countBy(data, function(d){ return PROYECTO_LABELS[d.Proyecto_ID] || d.Proyecto_ID || "Sin proyecto"; });
+  var entries = sortedEntries(counts, true);
+  document.getElementById("lbl-proy").textContent = entries.length + " proyectos";
+  makeChart("ch-proyecto", {
+    type:"bar",
+    data:{ labels: entries.map(function(e){return e[0];}),
+           datasets:[{ label:"Beneficiarios", data: entries.map(function(e){return e[1];}),
+             backgroundColor: entries.map(function(_,i){return COLORS[i%COLORS.length];}),
+             borderRadius:6, borderSkipped:false }] },
+    options:{ indexAxis:"y", responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{backgroundColor:"#0f172a",cornerRadius:6} },
+      scales:{ x:{grid:{color:"#f1f5f9"},ticks:{precision:0}}, y:{grid:{display:false}} } }
+  });
+}
+
+function renderMunicipio(data) {
+  var counts = countBy(data, function(d){ return d.MUNICIPIO || "Sin municipio"; });
+  var entries = sortedEntries(counts, true);
+  document.getElementById("lbl-mun").textContent = entries.length + " municipios";
+  makeChart("ch-municipio", {
+    type:"bar",
+    data:{ labels: entries.map(function(e){return e[0];}),
+           datasets:[{ label:"Beneficiarios", data: entries.map(function(e){return e[1];}),
+             backgroundColor:"#2563eb", borderRadius:6, borderSkipped:false }] },
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{backgroundColor:"#0f172a",cornerRadius:6} },
+      scales:{ y:{beginAtZero:true,grid:{color:"#f1f5f9"},ticks:{precision:0}}, x:{grid:{display:false}} } }
+  });
+}
+
+function renderEstado(data) {
+  var counts = countBy(data, function(d){ return d.ESTADO || "Sin estado"; });
+  var entries = sortedEntries(counts, true);
+  var palette = {
+    "VISITADO":"#3b82f6","APROBADO":"#16a34a","RECHAZADO":"#dc2626",
+    "EN EJECUCIÓN":"#d97706","EN EJECUCION":"#d97706","EN STAND BY":"#7c3aed",
+    "EJECUTADO":"#0891b2","FACTURADO":"#059669","Sin estado":"#94a3b8"
+  };
+  makeChart("ch-estado", {
+    type:"doughnut",
+    data:{ labels: entries.map(function(e){return e[0];}),
+           datasets:[{ data: entries.map(function(e){return e[1];}),
+             backgroundColor: entries.map(function(e,i){return palette[e[0].toUpperCase()]||palette[e[0]]||COLORS[i%COLORS.length];}),
+             borderWidth:2, borderColor:"#fff" }] },
+    options:{ responsive:true, maintainAspectRatio:false, cutout:"60%",
+      plugins:{ legend:{position:"bottom"}, tooltip:{backgroundColor:"#0f172a",cornerRadius:6} } }
+  });
+}
+
+function renderModulo(data) {
+  var counts = countBy(data, function(d){ return d.MODULO || "Sin módulo"; });
+  var entries = sortedEntries(counts, true);
+  makeChart("ch-modulo", {
+    type:"doughnut",
+    data:{ labels: entries.map(function(e){return "Módulo "+e[0];}),
+           datasets:[{ data: entries.map(function(e){return e[1];}),
+             backgroundColor: entries.map(function(_,i){return COLORS[i%COLORS.length];}),
+             borderWidth:2, borderColor:"#fff" }] },
+    options:{ responsive:true, maintainAspectRatio:false, cutout:"60%",
+      plugins:{ legend:{position:"bottom"}, tooltip:{backgroundColor:"#0f172a",cornerRadius:6} } }
+  });
+}
+
+function renderDiseno(data) {
+  var counts = countBy(data, function(d){ return d["DISEÑO INICIAL"] || "Sin diseño"; });
+  var entries = sortedEntries(counts, true);
+  makeChart("ch-diseno", {
+    type:"doughnut",
+    data:{ labels: entries.map(function(e){return e[0];}),
+           datasets:[{ data: entries.map(function(e){return e[1];}),
+             backgroundColor: entries.map(function(_,i){return COLORS[i%COLORS.length];}),
+             borderWidth:2, borderColor:"#fff" }] },
+    options:{ responsive:true, maintainAspectRatio:false, cutout:"60%",
+      plugins:{ legend:{position:"bottom"}, tooltip:{backgroundColor:"#0f172a",cornerRadius:6} } }
+  });
+}
+
+function renderFecha(data) {
+  var buckets = {};
+  data.forEach(function(d){
+    var dt = parseSheetDate(d["FECHA VISITA INICIAL"] || d.FECHA);
+    if (!dt) return;
+    var key = dt.getFullYear() + "-" + String(dt.getMonth()+1).padStart(2,"0") + "-" + String(dt.getDate()).padStart(2,"0");
+    buckets[key] = (buckets[key]||0) + 1;
+  });
+  var keys = Object.keys(buckets).sort();
+  document.getElementById("lbl-fecha").textContent = keys.length ? keys[0] + " a " + keys[keys.length-1] : "Sin fechas";
+  makeChart("ch-fecha", {
+    type:"bar",
+    data:{ labels: keys, datasets:[{ label:"Visitas", data: keys.map(function(k){return buckets[k];}),
+             backgroundColor:"#2563eb", borderRadius:4, borderSkipped:false }] },
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{backgroundColor:"#0f172a",cornerRadius:6} },
+      scales:{ y:{beginAtZero:true,grid:{color:"#f1f5f9"},ticks:{precision:0}}, x:{grid:{display:false}} } }
+  });
+}
+
+function renderFirma(data, col, chartId, siId, noId) {
+  var si=0, no=0;
+  data.forEach(function(d){
+    var v = (d[col]||"").toString().trim().toUpperCase();
+    if (v==="SI"||v==="SÍ"||v==="YES"||v==="TRUE"||v==="Y") si++;
+    else if (v) no++;
+    else no++;
+  });
+  document.getElementById(siId).textContent = si;
+  document.getElementById(noId).textContent = no;
+  makeChart(chartId, {
+    type:"doughnut",
+    data:{ labels:["SI","NO"], datasets:[{ data:[si,no],
+             backgroundColor:["#16a34a","#fca5a5"], borderWidth:2, borderColor:"#fff" }] },
+    options:{ responsive:true, maintainAspectRatio:false, cutout:"65%",
+      plugins:{ legend:{display:false}, tooltip:{backgroundColor:"#0f172a",cornerRadius:6} } }
+  });
+}
+
+function renderAll() {
+  var data = getFiltered();
+  renderKPIs(data);
+  renderProyecto(data);
+  renderMunicipio(data);
+  renderEstado(data);
+  renderModulo(data);
+  renderDiseno(data);
+  renderFecha(data);
+  renderFirma(data, "FIRMA 1 BENEFICIARIO", "ch-firma1", "f1-si", "f1-no");
+  renderFirma(data, "FIRMA 2 TECNICO", "ch-firma2", "f2-si", "f2-no");
+  renderFirma(data, "FIRMA 3 ALCALDIA", "ch-firma3", "f3-si", "f3-no");
+}
+
+function populateFilters() {
+  var proy = {}, mun = {};
+  ALL_DATA.forEach(function(d){
+    if (d.Proyecto_ID) proy[d.Proyecto_ID] = PROYECTO_LABELS[d.Proyecto_ID] || d.Proyecto_ID;
+    if (d.MUNICIPIO) mun[d.MUNICIPIO] = d.MUNICIPIO;
+  });
+  var pSel = document.getElementById("f-proyecto");
+  pSel.innerHTML = '<option value="">Todos</option>';
+  Object.keys(proy).sort().forEach(function(k){
+    var o = document.createElement("option"); o.value=k; o.textContent=proy[k]; pSel.appendChild(o);
+  });
+  var mSel = document.getElementById("f-municipio");
+  mSel.innerHTML = '<option value="">Todos</option>';
+  Object.keys(mun).sort().forEach(function(k){
+    var o = document.createElement("option"); o.value=k; o.textContent=k; mSel.appendChild(o);
+  });
+}
+
+function loadData() {
+  document.getElementById("loading").classList.remove("hidden");
+  fetch(SHEET_URL).then(function(r){return r.text();}).then(function(csv){
+    ALL_DATA = parseCSV(csv);
+    PROYECTO_LABELS = {};
+    ALL_DATA.forEach(function(d){
+      if (d.Proyecto_ID && d.CTTO && !PROYECTO_LABELS[d.Proyecto_ID]) PROYECTO_LABELS[d.Proyecto_ID] = d.CTTO;
+    });
+    populateFilters();
+    renderAll();
+    var now = new Date();
+    document.getElementById("last-update").textContent = now.toLocaleString("es-CO",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
+    document.getElementById("loading").classList.add("hidden");
+  }).catch(function(err){
+    console.error(err);
+    document.getElementById("loading").querySelector(".loading-text").textContent = "Error al cargar datos.";
+  });
+}
+
+loadData();
+setInterval(loadData, 5*60*1000);
+</script>
+
+</body>
+</html>
