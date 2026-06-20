@@ -315,7 +315,7 @@ function showRoute(d) {
 
     var geojson = route.geometry;
     _routeLayer = L.geoJSON(geojson, {
-      style: { color: "#2563eb", weight: 4, opacity: 0.8, dashArray: "8 6" }
+      style: { color: "#1e40af", weight: 6, opacity: 0.9 }
     }).addTo(_map);
 
     _routeOriginMarker = L.marker([center.lat, center.lng], { icon: createOriginIcon() }).addTo(_map);
@@ -420,8 +420,9 @@ function openPanel(idFichaEnc) {
 
   // Route button/container
   html += '<div class="sp-section" id="route-container">' +
-    '<button class="route-btn" onclick="showRoute(_currentPanelData)">&#x1F6E3; Ver ruta desde casco urbano</button>' +
+    '<div class="route-loading"><div class="loader" style="width:16px;height:16px;border-width:2px;"></div> Calculando ruta...</div>' +
   '</div>';
+  setTimeout(function(){ showRoute(d); }, 300);
 
   // Ubicación
   html += '<div class="sp-section"><div class="sp-section-title">Ubicación</div><div class="sp-grid">' +
