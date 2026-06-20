@@ -219,6 +219,8 @@ var DEFAULT_ESTADO = {color:"#64748b", icon:"&#x2B24;", bg:"#f1f5f9", border:"#c
 
 var ALL_DATA = [], _filtered = [], _map, _markers = [];
 var _routeLayer = null, _routeOriginMarker = null;
+var _allRoutesLayer = null, _allOriginsLayer = null;
+var _routeCache = {};
 var PROYECTO_LABELS = {};
 
 // ── CSV PARSER ──
@@ -298,6 +300,52 @@ function fetchRoute(fromLat, fromLng, toLat, toLng, callback) {
 function clearRoute() {
   if (_routeLayer) { _map.removeLayer(_routeLayer); _routeLayer = null; }
   if (_routeOriginMarker) { _map.removeLayer(_routeOriginMarker); _routeOriginMarker = null; }
+}
+
+function clearAllRoutes() {
+  if (_allRoutesLayer) { _map.removeLayer(_allRoutesLayer); _allRoutesLayer = null; }
+  if (_allOriginsLayer) { _map.removeLayer(_allOriginsLayer); _allOriginsLayer = null; }
+}
+
+function drawAllRoutes(data) {
+  clearAllRoutes();
+  _allRoutesLayer = L.layerGroup().addTo(_map);
+  _allOriginsLayer = L.layerGroup().addTo(_map);
+  var originsAdded = {};
+  var pending = 0, done = 0;
+
+  data.forEach(function(d) {
+    var coord = parseDMS(d.COORDENADAS);
+    if (!coord) return;
+    var muni = (d.MUNICIPIO || "").toUpperCase();
+    var center = MUNI_CENTERS[muni];
+    if (!center) return;
+
+    if (!originsAdded[muni]) {
+      L.marker([center.lat, center.lng], { icon: createOriginIcon() })
+        .bindPopup('<div style="font-size:12px;font-weight:700;text-align:center;">Casco Urbano<br>' + d.MUNICIPIO + '</div>')
+        .addTo(_allOriginsLayer);
+      originsAdded[muni] = true;
+    }
+
+    var cacheKey = center.lat + "," + center.lng + "->" + coord.lat + "," + coord.lng;
+    pending++;
+
+    if (_routeCache[cacheKey]) {
+      L.geoJSON(_routeCache[cacheKey], { style: { color: "#1e40af", weight: 5, opacity: 0.85 } }).addTo(_allRoutesLayer);
+      done++;
+      return;
+    }
+
+    fetchRoute(center.lat, center.lng, coord.lat, coord.lng, function(err, route) {
+      done++;
+      if (err || !route) return;
+      _routeCache[cacheKey] = route.geometry;
+      if (_allRoutesLayer) {
+        L.geoJSON(route.geometry, { style: { color: "#1e40af", weight: 5, opacity: 0.85 } }).addTo(_allRoutesLayer);
+      }
+    });
+  });
 }
 
 function showRoute(d) {
@@ -507,6 +555,7 @@ function renderMarkers(data) {
     _markers.push(marker);
   });
   if (bounds.length) _map.fitBounds(bounds, {padding:[50,50], maxZoom:13});
+  drawAllRoutes(data);
 }
 
 function applyFilters() {
