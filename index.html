@@ -185,6 +185,13 @@
     <option value="">Diagnóstico</option><option value="VIABLE">Viable</option><option value="INVIABLE">Inviable</option>
   </select>
   <input id="search-input" type="text" placeholder="Buscar beneficiario, vereda, ID..." oninput="applyFilters()">
+  <div style="display:flex;align-items:center;gap:4px;background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;padding:3px 8px;">
+    <span style="font-size:10px;font-weight:700;color:#1e40af;text-transform:uppercase;">Visita:</span>
+    <input id="date-from" type="date" onchange="applyFilters()" title="Desde" style="border:none;background:transparent;font-size:11px;padding:2px;outline:none;">
+    <span style="color:#94a3b8;">→</span>
+    <input id="date-to" type="date" onchange="applyFilters()" title="Hasta" style="border:none;background:transparent;font-size:11px;padding:2px;outline:none;">
+    <button onclick="clearDateFilter()" title="Limpiar fechas" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:14px;padding:0 4px;">&#x2715;</button>
+  </div>
   <div class="estado-legend" id="estado-legend"></div>
 </div>
 
@@ -643,17 +650,69 @@ function renderMarkers(data) {
   drawAllRoutes(data);
 }
 
+// Parse a date string from the sheet to a Date object
+var SPANISH_MONTHS = {ene:0,feb:1,mar:2,abr:3,may:4,jun:5,jul:6,ago:7,sep:8,sept:8,oct:9,nov:10,dic:11};
+function parseSheetDate(s) {
+  if (!s) return null;
+  s = String(s).trim();
+  if (!s) return null;
+  // Spanish: 19-jun-2026 or 19 jun 2026 or 19/jun/2026
+  var sp = s.toLowerCase().match(/^(\d{1,2})[\s\-\/]+([a-záéíóú]+)[\s\-\/]+(\d{2,4})/);
+  if (sp) {
+    var monKey = sp[2].slice(0,4).replace(/[áéíóú]/g, function(c){return {á:"a",é:"e",í:"i",ó:"o",ú:"u"}[c];});
+    if (SPANISH_MONTHS[monKey] === undefined) monKey = sp[2].slice(0,3);
+    var month = SPANISH_MONTHS[monKey];
+    if (month !== undefined) {
+      var y = +sp[3]; if (y < 100) y += 2000;
+      return new Date(y, month, +sp[1]);
+    }
+  }
+  // ISO: yyyy-mm-dd
+  var iso = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (iso) return new Date(+iso[1], +iso[2]-1, +iso[3]);
+  // dd/mm/yyyy or mm/dd/yyyy
+  var dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (dmy) {
+    var a = +dmy[1], b = +dmy[2], y2 = +dmy[3];
+    if (y2 < 100) y2 += 2000;
+    var day, mo;
+    if (a > 12) { day = a; mo = b; }
+    else if (b > 12) { mo = a; day = b; }
+    else { day = a; mo = b; }
+    return new Date(y2, mo-1, day);
+  }
+  var d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function clearDateFilter() {
+  document.getElementById("date-from").value = "";
+  document.getElementById("date-to").value = "";
+  applyFilters();
+}
+
 function applyFilters() {
   var proyecto = document.getElementById("sel-proyecto").value;
   var municipio = document.getElementById("sel-municipio").value;
   var estado = document.getElementById("sel-estado").value;
   var diagnostico = document.getElementById("sel-diagnostico").value;
   var search = (document.getElementById("search-input").value||"").toLowerCase();
+  var fromStr = document.getElementById("date-from").value;
+  var toStr = document.getElementById("date-to").value;
+  var fromDate = fromStr ? new Date(fromStr+"T00:00:00") : null;
+  var toDate = toStr ? new Date(toStr+"T23:59:59") : null;
+
   _filtered = ALL_DATA.filter(function(d) {
     if (proyecto && d.Proyecto_ID !== proyecto) return false;
     if (municipio && d.MUNICIPIO !== municipio) return false;
     if (estado && (d.ESTADO||"").toUpperCase() !== estado.toUpperCase()) return false;
     if (diagnostico && (d.DIAGNOSTICO||"").toUpperCase() !== diagnostico.toUpperCase()) return false;
+    if (fromDate || toDate) {
+      var visita = parseSheetDate(d["FECHA VISITA INICIAL"] || d["FECHA_VISITA_INICIAL"] || d.FECHA);
+      if (!visita) return false;
+      if (fromDate && visita < fromDate) return false;
+      if (toDate && visita > toDate) return false;
+    }
     if (search) { var hay = [d["NOMBRE BENEFICIARIO"],d.VEREDA,d.MUNICIPIO,d.ID_FICHA,d.CORREGIMIENTO,d.IDENTIFICACION_BENEF,d["PUNTO DE REFERENCIA"]].join(" ").toLowerCase(); if (hay.indexOf(search)===-1) return false; }
     return true;
   });
