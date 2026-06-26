@@ -691,53 +691,81 @@ function clearDateFilter() {
   applyFilters();
 }
 
-function applyFilters() {
-  var proyecto = document.getElementById("sel-proyecto").value;
-  var municipio = document.getElementById("sel-municipio").value;
-  var estado = document.getElementById("sel-estado").value;
-  var diagnostico = document.getElementById("sel-diagnostico").value;
-  var search = (document.getElementById("search-input").value||"").toLowerCase();
+// Returns true if d matches the active filters, optionally skipping one filter key
+// so that dropdown options can be computed relative to the other active filters.
+function matchesFilters(d, sel, skipKey) {
+  if (skipKey !== "proyecto" && sel.proyecto && d.Proyecto_ID !== sel.proyecto) return false;
+  if (skipKey !== "municipio" && sel.municipio && d.MUNICIPIO !== sel.municipio) return false;
+  if (skipKey !== "estado" && sel.estado && (d.ESTADO||"").toUpperCase() !== sel.estado.toUpperCase()) return false;
+  if (skipKey !== "diagnostico" && sel.diagnostico && (d.DIAGNOSTICO||"").toUpperCase() !== sel.diagnostico.toUpperCase()) return false;
+  if (skipKey !== "date" && (sel.fromDate || sel.toDate)) {
+    var visita = parseSheetDate(d["FECHA VISITA INICIAL"] || d["FECHA_VISITA_INICIAL"] || d.FECHA);
+    if (!visita) return false;
+    if (sel.fromDate && visita < sel.fromDate) return false;
+    if (sel.toDate && visita > sel.toDate) return false;
+  }
+  if (skipKey !== "search" && sel.search) {
+    var hay = [d["NOMBRE BENEFICIARIO"],d.VEREDA,d.MUNICIPIO,d.ID_FICHA,d.CORREGIMIENTO,d.IDENTIFICACION_BENEF,d["PUNTO DE REFERENCIA"]].join(" ").toLowerCase();
+    if (hay.indexOf(sel.search)===-1) return false;
+  }
+  return true;
+}
+
+function getCurrentSelection() {
   var fromStr = document.getElementById("date-from").value;
   var toStr = document.getElementById("date-to").value;
-  var fromDate = fromStr ? new Date(fromStr+"T00:00:00") : null;
-  var toDate = toStr ? new Date(toStr+"T23:59:59") : null;
+  return {
+    proyecto: document.getElementById("sel-proyecto").value,
+    municipio: document.getElementById("sel-municipio").value,
+    estado: document.getElementById("sel-estado").value,
+    diagnostico: document.getElementById("sel-diagnostico").value,
+    search: (document.getElementById("search-input").value||"").toLowerCase(),
+    fromDate: fromStr ? new Date(fromStr+"T00:00:00") : null,
+    toDate: toStr ? new Date(toStr+"T23:59:59") : null
+  };
+}
 
-  _filtered = ALL_DATA.filter(function(d) {
-    if (proyecto && d.Proyecto_ID !== proyecto) return false;
-    if (municipio && d.MUNICIPIO !== municipio) return false;
-    if (estado && (d.ESTADO||"").toUpperCase() !== estado.toUpperCase()) return false;
-    if (diagnostico && (d.DIAGNOSTICO||"").toUpperCase() !== diagnostico.toUpperCase()) return false;
-    if (fromDate || toDate) {
-      var visita = parseSheetDate(d["FECHA VISITA INICIAL"] || d["FECHA_VISITA_INICIAL"] || d.FECHA);
-      if (!visita) return false;
-      if (fromDate && visita < fromDate) return false;
-      if (toDate && visita > toDate) return false;
-    }
-    if (search) { var hay = [d["NOMBRE BENEFICIARIO"],d.VEREDA,d.MUNICIPIO,d.ID_FICHA,d.CORREGIMIENTO,d.IDENTIFICACION_BENEF,d["PUNTO DE REFERENCIA"]].join(" ").toLowerCase(); if (hay.indexOf(search)===-1) return false; }
-    return true;
-  });
+function applyFilters() {
+  var sel = getCurrentSelection();
+  _filtered = ALL_DATA.filter(function(d) { return matchesFilters(d, sel, null); });
+  populateFilters(ALL_DATA, sel);
   renderMarkers(_filtered);
   updateStats(_filtered);
 }
 
-function populateFilters(data) {
+function populateFilters(data, sel) {
+  sel = sel || getCurrentSelection();
   var proyectos={},municipios={},estados={};
   data.forEach(function(d){
-    if(d.Proyecto_ID)proyectos[d.Proyecto_ID]=(proyectos[d.Proyecto_ID]||0)+1;
-    if(d.MUNICIPIO)municipios[d.MUNICIPIO]=(municipios[d.MUNICIPIO]||0)+1;
-    if(d.ESTADO)estados[(d.ESTADO||"").toUpperCase()]=(estados[(d.ESTADO||"").toUpperCase()]||0)+1;
+    if(d.Proyecto_ID && matchesFilters(d, sel, "proyecto")) proyectos[d.Proyecto_ID]=(proyectos[d.Proyecto_ID]||0)+1;
+    if(d.MUNICIPIO && matchesFilters(d, sel, "municipio")) municipios[d.MUNICIPIO]=(municipios[d.MUNICIPIO]||0)+1;
+    if(d.ESTADO && matchesFilters(d, sel, "estado")) estados[(d.ESTADO||"").toUpperCase()]=(estados[(d.ESTADO||"").toUpperCase()]||0)+1;
   });
-  var selProy=document.getElementById("sel-proyecto"); selProy.innerHTML='<option value="">Todos los proyectos</option>';
+
+  var selProy=document.getElementById("sel-proyecto");
+  selProy.innerHTML='<option value="">Todos los proyectos</option>';
   Object.keys(proyectos).sort().forEach(function(p){ var o=document.createElement("option");o.value=p;o.textContent=(PROYECTO_LABELS[p]||p)+" ("+proyectos[p]+")";selProy.appendChild(o); });
-  var selMun=document.getElementById("sel-municipio"); selMun.innerHTML='<option value="">Todos los municipios</option>';
+  if (sel.proyecto && proyectos[sel.proyecto]) selProy.value = sel.proyecto;
+  else if (sel.proyecto) { selProy.value = ""; sel.proyecto = ""; }
+
+  var selMun=document.getElementById("sel-municipio");
+  selMun.innerHTML='<option value="">Todos los municipios</option>';
   Object.keys(municipios).sort().forEach(function(m){ var o=document.createElement("option");o.value=m;o.textContent=m+" ("+municipios[m]+")";selMun.appendChild(o); });
-  var selEst=document.getElementById("sel-estado"); selEst.innerHTML='<option value="">Todos los estados</option>';
+  if (sel.municipio && municipios[sel.municipio]) selMun.value = sel.municipio;
+  else if (sel.municipio) { selMun.value = ""; sel.municipio = ""; }
+
+  var selEst=document.getElementById("sel-estado");
+  selEst.innerHTML='<option value="">Todos los estados</option>';
   Object.keys(estados).sort().forEach(function(e){ var o=document.createElement("option");o.value=e;o.textContent=e+" ("+estados[e]+")";selEst.appendChild(o); });
+  if (sel.estado && estados[sel.estado.toUpperCase()]) selEst.value = sel.estado;
+  else if (sel.estado) { selEst.value = ""; sel.estado = ""; }
+
   var legend=document.getElementById("estado-legend"); legend.innerHTML="";
   Object.keys(ESTADO_CONFIG).forEach(function(key){
     if(key==="EN EJECUCION")return;
     var cfg=ESTADO_CONFIG[key]; var item=document.createElement("div"); item.className="legend-item";
     item.innerHTML='<div class="legend-dot" style="background:'+cfg.color+';"></div>'+key;
+    if (sel.estado && sel.estado.toUpperCase() === key) item.classList.add("active-legend");
     item.onclick=function(){ document.getElementById("sel-estado").value=item.classList.contains("active-legend")?"":key;
       document.querySelectorAll(".legend-item").forEach(function(el){el.classList.remove("active-legend");});
       if(document.getElementById("sel-estado").value)item.classList.add("active-legend"); applyFilters(); };
