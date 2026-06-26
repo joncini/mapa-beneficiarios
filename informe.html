@@ -6,6 +6,8 @@
 <title>Informe Gerencial — Viviendas Antioquia</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;}
   :root{
@@ -82,6 +84,32 @@
 
   .footer{text-align:center;color:var(--soft);font-size:11px;padding:20px;}
   .footer a{color:var(--accent);text-decoration:none;}
+
+  /* ── ONE-PAGE PDF REPORT (rendered off-screen, captured with html2canvas) ── */
+  #pdf-report{position:fixed;left:-9999px;top:0;width:780px;background:#fff;
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;color:#0f172a;padding:28px 32px;}
+  #pdf-report .pr-header{display:flex;justify-content:space-between;align-items:flex-start;
+    border-bottom:3px solid #1e3a8a;padding-bottom:10px;margin-bottom:14px;}
+  #pdf-report .pr-title{font-size:19px;font-weight:800;color:#1e3a8a;}
+  #pdf-report .pr-title span{color:#2563eb;}
+  #pdf-report .pr-sub{font-size:10px;color:#64748b;margin-top:2px;}
+  #pdf-report .pr-meta{text-align:right;font-size:10px;color:#64748b;}
+  #pdf-report .pr-meta b{color:#0f172a;display:block;font-size:11px;}
+  #pdf-report .pr-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px;}
+  #pdf-report .pr-kpi{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 6px;text-align:center;}
+  #pdf-report .pr-kpi .v{font-size:18px;font-weight:800;line-height:1;}
+  #pdf-report .pr-kpi .l{font-size:8px;color:#64748b;text-transform:uppercase;font-weight:700;margin-top:3px;letter-spacing:.3px;}
+  #pdf-report .pr-charts{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
+  #pdf-report .pr-chart-box{border:1px solid #e2e8f0;border-radius:8px;padding:10px;}
+  #pdf-report .pr-chart-box h4{font-size:10px;font-weight:700;color:#1e3a8a;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
+  #pdf-report .pr-chart-box img{width:100%;height:150px;object-fit:contain;display:block;}
+  #pdf-report .pr-section{border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:10px;}
+  #pdf-report .pr-section h4{font-size:11px;font-weight:800;color:#1e3a8a;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;display:flex;align-items:center;gap:5px;}
+  #pdf-report .pr-section ul{list-style:none;padding:0;margin:0;}
+  #pdf-report .pr-section li{font-size:10.5px;line-height:1.5;padding:2px 0 2px 14px;position:relative;color:#1e293b;}
+  #pdf-report .pr-section li:before{content:"▸";position:absolute;left:0;color:#2563eb;font-weight:800;}
+  #pdf-report .pr-two{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  #pdf-report .pr-footer{text-align:center;font-size:9px;color:#94a3b8;margin-top:6px;border-top:1px solid #e2e8f0;padding-top:8px;}
 </style>
 </head>
 <body>
@@ -98,6 +126,7 @@
   </div>
   <div class="header-actions">
     <a href="index.html">&#x1F5FA; Ver Mapa</a>
+    <button onclick="downloadPDF()" id="btn-pdf">&#x1F4C4; Descargar PDF</button>
     <button onclick="loadData()">&#x21BB; Actualizar</button>
   </div>
 </div>
@@ -176,6 +205,8 @@
 </div>
 
 <div class="footer">Informe generado automáticamente desde Google Sheets &middot; <a href="index.html">Volver al mapa</a></div>
+
+<div id="pdf-report"></div>
 
 <script>
 var SHEET_ID = "1XO5fl4hqh7iREDY6cTLpZoLkqJBUhk5-6nWWEpkOE08";
@@ -461,6 +492,128 @@ function loadData() {
     console.error(err);
     document.getElementById("loading").querySelector(".loading-text").textContent = "Error al cargar datos.";
   });
+}
+
+// ── ONE-PAGE PDF EXECUTIVE REPORT ──
+function buildInsights(data) {
+  var total = data.length;
+  var viables = data.filter(function(d){return (d.DIAGNOSTICO||"").toUpperCase()==="VIABLE";}).length;
+  var inviables = data.filter(function(d){return (d.DIAGNOSTICO||"").toUpperCase()==="INVIABLE";}).length;
+  var sinDiag = total - viables - inviables;
+  var pctViable = total ? Math.round(viables/total*100) : 0;
+  var pctInviable = total ? Math.round(inviables/total*100) : 0;
+
+  var estados = countBy(data, function(d){ return (d.ESTADO||"Sin estado").toUpperCase(); });
+  var estadoEntries = sortedEntries(estados, true);
+  var rechazados = estados["RECHAZADO"] || 0;
+  var standby = estados["EN STAND BY"] || 0;
+  var aprobados = estados["APROBADO"] || 0;
+  var ejecutados = (estados["EJECUTADO"]||0) + (estados["EJECUCIÓN"]||0) + (estados["EN EJECUCIÓN"]||0) + (estados["EN EJECUCION"]||0);
+  var facturados = estados["FACTURADO"] || 0;
+
+  var municipios = countBy(data, function(d){ return d.MUNICIPIO || "Sin municipio"; });
+  var munEntries = sortedEntries(municipios, true);
+  var topMun = munEntries[0];
+
+  var proyectos = countBy(data, function(d){ return PROYECTO_LABELS[d.Proyecto_ID] || d.Proyecto_ID || "Sin proyecto"; });
+  var proyEntries = sortedEntries(proyectos, true);
+
+  var sinCoord = data.filter(function(d){return !d.COORDENADAS || !d.COORDENADAS.trim();}).length;
+
+  var resumen = [], decisiones = [];
+
+  resumen.push(total + " beneficiarios activos en " + munEntries.length + " municipio(s) y " + proyEntries.length + " proyecto(s).");
+  resumen.push(pctViable + "% de los diagnósticos son VIABLES (" + viables + ") y " + pctInviable + "% INVIABLES (" + inviables + ").");
+  if (topMun) resumen.push(topMun[0] + " concentra la mayor cantidad de beneficiarios (" + topMun[1] + ", " + Math.round(topMun[1]/total*100) + "% del total).");
+  resumen.push(facturados + " caso(s) facturado(s) y " + aprobados + " aprobado(s) en el corte actual.");
+  if (sinCoord > 0) resumen.push(sinCoord + " registro(s) sin coordenadas geográficas — pendientes de georreferenciación.");
+
+  if (pctInviable > 15) decisiones.push("El " + pctInviable + "% de inviabilidad supera el umbral recomendado (15%); revisar criterios técnicos de viabilidad con el equipo de campo.");
+  else decisiones.push("La tasa de inviabilidad (" + pctInviable + "%) se mantiene en rango aceptable; mantener criterios de diagnóstico actuales.");
+  if (rechazados > 0) decisiones.push(rechazados + " caso(s) en estado RECHAZADO requieren plan de acción o sustitución de beneficiario para no perder cobertura.");
+  if (standby > 0) decisiones.push(standby + " caso(s) EN STAND BY: priorizar su reactivación para evitar atrasos en el cronograma.");
+  if (topMun && munEntries.length > 1) decisiones.push("Evaluar redistribución de recursos hacia municipios con menor avance frente a " + topMun[0] + " para equilibrar la cobertura territorial.");
+  if (sinCoord > 0) decisiones.push("Asignar a campo la georreferenciación de los " + sinCoord + " registro(s) pendientes antes del próximo corte.");
+  decisiones.push("Dar seguimiento quincenal a los indicadores de viabilidad y estado para sostener el ritmo de ejecución.");
+
+  return { resumen: resumen, decisiones: decisiones, total: total, viables: viables, inviables: inviables,
+    pctViable: pctViable, pctInviable: pctInviable, sinDiag: sinDiag, munCount: munEntries.length,
+    proyCount: proyEntries.length, sinCoord: sinCoord };
+}
+
+function buildPDFReportHTML(data, insights) {
+  var now = new Date();
+  var fecha = now.toLocaleDateString("es-CO",{day:"2-digit",month:"long",year:"numeric"});
+  var proyFiltro = document.getElementById("f-proyecto");
+  var munFiltro = document.getElementById("f-municipio");
+  var proyLabel = proyFiltro.value ? proyFiltro.options[proyFiltro.selectedIndex].textContent : "Todos los proyectos";
+  var munLabel = munFiltro.value ? munFiltro.options[munFiltro.selectedIndex].textContent : "Todos los municipios";
+
+  var estadoImg = _charts["ch-estado"] ? _charts["ch-estado"].toBase64Image() : "";
+  var proyImg = _charts["ch-proyecto"] ? _charts["ch-proyecto"].toBase64Image() : "";
+
+  return ''+
+  '<div class="pr-header">'+
+    '<div><div class="pr-title">Informe <span>Gerencial</span></div>'+
+    '<div class="pr-sub">Viviendas Antioquia — Mejoramiento de Viviendas</div></div>'+
+    '<div class="pr-meta"><b>'+fecha+'</b>Proyecto: '+proyLabel+'<br>Municipio: '+munLabel+'</div>'+
+  '</div>'+
+  '<div class="pr-kpis">'+
+    '<div class="pr-kpi"><div class="v" style="color:#2563eb;">'+insights.total+'</div><div class="l">Total</div></div>'+
+    '<div class="pr-kpi"><div class="v" style="color:#16a34a;">'+insights.viables+'</div><div class="l">Viables</div></div>'+
+    '<div class="pr-kpi"><div class="v" style="color:#dc2626;">'+insights.inviables+'</div><div class="l">Inviables</div></div>'+
+    '<div class="pr-kpi"><div class="v" style="color:#0f172a;">'+insights.pctViable+'%</div><div class="l">% Viable</div></div>'+
+    '<div class="pr-kpi"><div class="v" style="color:#7c3aed;">'+insights.munCount+'</div><div class="l">Municipios</div></div>'+
+    '<div class="pr-kpi"><div class="v" style="color:#d97706;">'+insights.proyCount+'</div><div class="l">Proyectos</div></div>'+
+  '</div>'+
+  '<div class="pr-charts">'+
+    '<div class="pr-chart-box"><h4>Estados de Visitas</h4>'+(estadoImg?'<img src="'+estadoImg+'">':'')+'</div>'+
+    '<div class="pr-chart-box"><h4>Beneficiarios por Proyecto</h4>'+(proyImg?'<img src="'+proyImg+'">':'')+'</div>'+
+  '</div>'+
+  '<div class="pr-two">'+
+    '<div class="pr-section"><h4>&#x1F4CB; Resumen Ejecutivo</h4><ul>'+
+      insights.resumen.map(function(t){return '<li>'+t+'</li>';}).join('')+
+    '</ul></div>'+
+    '<div class="pr-section"><h4>&#x1F3AF; Decisiones y Seguimiento</h4><ul>'+
+      insights.decisiones.map(function(t){return '<li>'+t+'</li>';}).join('')+
+    '</ul></div>'+
+  '</div>'+
+  '<div class="pr-footer">Generado automáticamente desde Google Sheets &middot; '+now.toLocaleString("es-CO",{hour:"2-digit",minute:"2-digit"})+' &middot; Viviendas Antioquia</div>';
+}
+
+function downloadPDF() {
+  var btn = document.getElementById("btn-pdf");
+  var originalText = btn.innerHTML;
+  btn.innerHTML = "&#x23F3; Generando...";
+  btn.disabled = true;
+
+  var data = getFiltered();
+  var insights = buildInsights(data);
+  var container = document.getElementById("pdf-report");
+  container.innerHTML = buildPDFReportHTML(data, insights);
+
+  setTimeout(function() {
+    html2canvas(container, { scale: 2, backgroundColor: "#ffffff", useCORS: true }).then(function(canvas) {
+      var imgData = canvas.toDataURL("image/png");
+      var pdf = new jspdf.jsPDF("p", "mm", "a4");
+      var pageWidth = pdf.internal.pageSize.getWidth();
+      var pageHeight = pdf.internal.pageSize.getHeight();
+      var imgWidth = pageWidth - 10;
+      var imgHeight = canvas.height * imgWidth / canvas.width;
+      if (imgHeight > pageHeight - 10) { imgHeight = pageHeight - 10; imgWidth = canvas.width * imgHeight / canvas.height; }
+      var x = (pageWidth - imgWidth) / 2, y = 5;
+      pdf.addImage(imgData, "PNG", x, y, imgWidth, imgHeight);
+      var fname = "Informe_Gerencial_ViviendasAntioquia_" + new Date().toISOString().slice(0,10) + ".pdf";
+      pdf.save(fname);
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }).catch(function(err) {
+      console.error("Error generando PDF:", err);
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+      alert("Error al generar el PDF. Intenta de nuevo.");
+    });
+  }, 80);
 }
 
 loadData();

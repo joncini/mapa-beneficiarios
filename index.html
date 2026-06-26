@@ -151,6 +151,7 @@
     <div class="chip" style="color:#fde68a;">Municipios: <b id="st-municipios">—</b></div>
   </div>
   <div class="header-right">
+    <button class="btn btn-ghost" onclick="openTableModal()">&#x1F4CA; Tabla distancias</button>
     <button class="btn btn-ghost" onclick="openAdminModal()">&#x2699; Columnas</button>
     <button class="btn btn-ghost" onclick="reloadData()">&#x21BB; Actualizar</button>
   </div>
@@ -177,6 +178,39 @@
   </div>
 </div>
 
+<div id="table-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;width:880px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,.3);">
+    <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
+      <div>
+        <div style="font-weight:700;font-size:15px;">Tabla de distancias — Centro municipal a beneficiario</div>
+        <div style="font-size:11px;color:#64748b;margin-top:2px;" id="table-modal-subtitle">Según filtros aplicados</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button onclick="exportTableCSV()" style="padding:6px 12px;border:1px solid #2563eb;background:#fff;color:#2563eb;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">&#x2B07; Exportar CSV</button>
+        <button onclick="closeTableModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#64748b;">&#x2715;</button>
+      </div>
+    </div>
+    <div style="flex:1;overflow:auto;padding:0 20px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead style="position:sticky;top:0;background:#fff;box-shadow:0 1px 0 #e2e8f0;">
+          <tr style="text-align:left;color:#64748b;text-transform:uppercase;font-size:10px;letter-spacing:.5px;">
+            <th style="padding:10px 8px;">Beneficiario</th>
+            <th style="padding:10px 8px;">Municipio</th>
+            <th style="padding:10px 8px;">Vereda</th>
+            <th style="padding:10px 8px;">Estado</th>
+            <th style="padding:10px 8px;text-align:right;">Coord. Centro</th>
+            <th style="padding:10px 8px;text-align:right;">Coord. Beneficiario</th>
+            <th style="padding:10px 8px;text-align:right;">Distancia (km)</th>
+            <th style="padding:10px 8px;text-align:right;">Tiempo est. (min)</th>
+          </tr>
+        </thead>
+        <tbody id="table-modal-body"></tbody>
+        <tfoot id="table-modal-foot" style="font-weight:700;border-top:2px solid #cbd5e1;"></tfoot>
+      </table>
+    </div>
+  </div>
+</div>
+
 <div class="toolbar">
   <select id="sel-proyecto" onchange="applyFilters()"><option value="">Todos los proyectos</option></select>
   <select id="sel-municipio" onchange="applyFilters()"><option value="">Todos los municipios</option></select>
@@ -192,6 +226,7 @@
     <input id="date-to" type="date" onchange="applyFilters()" title="Hasta" style="border:none;background:transparent;font-size:11px;padding:2px;outline:none;">
     <button onclick="clearDateFilter()" title="Limpiar fechas" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:14px;padding:0 4px;">&#x2715;</button>
   </div>
+  <button onclick="clearAllFilters()" title="Quitar todos los filtros" style="display:flex;align-items:center;gap:4px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">&#x2715; Quitar filtros</button>
   <div class="estado-legend" id="estado-legend"></div>
 </div>
 
@@ -569,6 +604,127 @@ function saveAdminConfig() {
   if (_currentPanelData) openPanel(encodeURIComponent(_currentPanelData.ID_FICHA));
 }
 
+// ── DISTANCE TABLE MODAL ──
+function haversineKm(lat1, lng1, lat2, lng2) {
+  var R = 6371;
+  var dLat = (lat2-lat1) * Math.PI/180, dLng = (lng2-lng1) * Math.PI/180;
+  var a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+          Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*
+          Math.sin(dLng/2)*Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function fmtCoord(lat, lng) { return lat.toFixed(5) + ", " + lng.toFixed(5); }
+
+function openTableModal() {
+  document.getElementById("table-modal-subtitle").textContent =
+    _filtered.length + " beneficiario(s) según filtros aplicados";
+  renderTableModal();
+  document.getElementById("table-modal").style.display = "flex";
+}
+
+function closeTableModal() { document.getElementById("table-modal").style.display = "none"; }
+
+function buildTableRows() {
+  var rows = [], pendingFetches = [];
+  _filtered.forEach(function(d) {
+    var coord = parseDMS(d.COORDENADAS);
+    var muni = (d.MUNICIPIO || "").toUpperCase();
+    var center = MUNI_CENTERS[muni];
+    var row = { d: d, center: center, coord: coord, distanceKm: null, durationMin: null, estimated: false };
+    if (coord && center) {
+      var route = getRouteInfo(d);
+      if (route) {
+        row.distanceKm = route.distance / 1000;
+        row.durationMin = route.duration / 60;
+      } else {
+        row.distanceKm = haversineKm(center.lat, center.lng, coord.lat, coord.lng);
+        row.durationMin = null;
+        row.estimated = true;
+        var cacheKey = center.lat + "," + center.lng + "->" + coord.lat + "," + coord.lng;
+        pendingFetches.push({ key: cacheKey, fromLat: center.lat, fromLng: center.lng, toLat: coord.lat, toLng: coord.lng });
+      }
+    }
+    rows.push(row);
+  });
+  return { rows: rows, pendingFetches: pendingFetches };
+}
+
+function renderTableModal() {
+  var built = buildTableRows();
+  var rows = built.rows;
+  var body = document.getElementById("table-modal-body");
+  var foot = document.getElementById("table-modal-foot");
+
+  body.innerHTML = rows.map(function(r) {
+    var d = r.d;
+    var cfg = ESTADO_CONFIG[(d.ESTADO || "").toUpperCase()] || DEFAULT_ESTADO;
+    var centerTxt = r.center ? fmtCoord(r.center.lat, r.center.lng) : '<span style="color:#94a3b8;">Sin centro</span>';
+    var coordTxt = r.coord ? fmtCoord(r.coord.lat, r.coord.lng) : '<span style="color:#94a3b8;">Sin coordenadas</span>';
+    var distTxt = r.distanceKm != null ? r.distanceKm.toFixed(2) + (r.estimated ? " *" : "") : "—";
+    var durTxt = r.durationMin != null ? Math.round(r.durationMin) : (r.estimated ? "—" : "—");
+    return '<tr style="border-bottom:1px solid #f1f5f9;">' +
+      '<td style="padding:8px;">' + (d["NOMBRE BENEFICIARIO"] || "—") + '</td>' +
+      '<td style="padding:8px;">' + (d.MUNICIPIO || "—") + '</td>' +
+      '<td style="padding:8px;">' + (d.VEREDA || "—") + '</td>' +
+      '<td style="padding:8px;"><span style="background:' + cfg.bg + ';color:' + cfg.text + ';border:1px solid ' + cfg.border + ';padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">' + (d.ESTADO || "Sin estado") + '</span></td>' +
+      '<td style="padding:8px;text-align:right;font-family:monospace;font-size:11px;">' + centerTxt + '</td>' +
+      '<td style="padding:8px;text-align:right;font-family:monospace;font-size:11px;">' + coordTxt + '</td>' +
+      '<td style="padding:8px;text-align:right;font-weight:700;">' + distTxt + '</td>' +
+      '<td style="padding:8px;text-align:right;font-weight:700;">' + durTxt + '</td>' +
+    '</tr>';
+  }).join("") + (rows.length ? "" : '<tr><td colspan="8" style="padding:20px;text-align:center;color:#94a3b8;">No hay beneficiarios con los filtros actuales.</td></tr>');
+
+  var totalKm = 0, totalMin = 0, countDist = 0, countDur = 0, anyEstimated = false;
+  rows.forEach(function(r) {
+    if (r.distanceKm != null) { totalKm += r.distanceKm; countDist++; }
+    if (r.durationMin != null) { totalMin += r.durationMin; countDur++; }
+    if (r.estimated) anyEstimated = true;
+  });
+  var durH = Math.floor(totalMin/60), durM = Math.round(totalMin%60);
+  var totalDurStr = countDur ? (durH > 0 ? durH + "h " + durM + "min" : Math.round(totalMin) + " min") : "—";
+  foot.innerHTML = '<tr>' +
+    '<td colspan="6" style="padding:10px 8px;text-align:right;">TOTAL (' + countDist + ' punto' + (countDist===1?"":"s") + ' con datos)</td>' +
+    '<td style="padding:10px 8px;text-align:right;">' + totalKm.toFixed(2) + ' km</td>' +
+    '<td style="padding:10px 8px;text-align:right;">' + totalDurStr + '</td>' +
+  '</tr>' + (anyEstimated ? '<tr><td colspan="8" style="padding:6px 8px;font-weight:400;font-size:10px;color:#94a3b8;">* Distancia aproximada en línea recta (ruta vial aún calculándose)</td></tr>' : "");
+
+  if (built.pendingFetches.length) {
+    built.pendingFetches.forEach(function(p) {
+      if (_routeCache[p.key]) return;
+      fetchRoute(p.fromLat, p.fromLng, p.toLat, p.toLng, function(err, route) {
+        if (err || !route) return;
+        _routeCache[p.key] = { geometry: route.geometry, distance: route.distance, duration: route.duration, raw: route };
+        if (document.getElementById("table-modal").style.display !== "none") renderTableModal();
+      });
+    });
+  }
+}
+
+function exportTableCSV() {
+  var built = buildTableRows();
+  var lines = ["Beneficiario,Municipio,Vereda,Estado,Coord Centro,Coord Beneficiario,Distancia (km),Tiempo est (min)"];
+  built.rows.forEach(function(r) {
+    var d = r.d;
+    lines.push([
+      '"' + (d["NOMBRE BENEFICIARIO"] || "").replace(/"/g,'""') + '"',
+      d.MUNICIPIO || "",
+      '"' + (d.VEREDA || "").replace(/"/g,'""') + '"',
+      d.ESTADO || "",
+      r.center ? fmtCoord(r.center.lat, r.center.lng) : "",
+      r.coord ? fmtCoord(r.coord.lat, r.coord.lng) : "",
+      r.distanceKm != null ? r.distanceKm.toFixed(2) : "",
+      r.durationMin != null ? Math.round(r.durationMin) : ""
+    ].join(","));
+  });
+  var blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = "distancias_beneficiarios.csv";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // ── SIDE PANEL ──
 function openPanel(idFichaEnc) {
   var idFicha = decodeURIComponent(idFichaEnc);
@@ -688,6 +844,18 @@ function parseSheetDate(s) {
 function clearDateFilter() {
   document.getElementById("date-from").value = "";
   document.getElementById("date-to").value = "";
+  applyFilters();
+}
+
+function clearAllFilters() {
+  document.getElementById("sel-proyecto").value = "";
+  document.getElementById("sel-municipio").value = "";
+  document.getElementById("sel-estado").value = "";
+  document.getElementById("sel-diagnostico").value = "";
+  document.getElementById("search-input").value = "";
+  document.getElementById("date-from").value = "";
+  document.getElementById("date-to").value = "";
+  document.querySelectorAll(".legend-item").forEach(function(el){ el.classList.remove("active-legend"); });
   applyFilters();
 }
 
