@@ -214,7 +214,7 @@
 <div class="toolbar">
   <select id="sel-proyecto" onchange="applyFilters()"><option value="">Todos los proyectos</option></select>
   <select id="sel-municipio" onchange="applyFilters()"><option value="">Todos los municipios</option></select>
-  <select id="sel-estado" onchange="applyFilters()"><option value="">Todos los estados</option></select>
+  <select id="sel-estado" onchange="onEstadoSelectChange()"><option value="">Todos los estados</option></select>
   <select id="sel-diagnostico" onchange="applyFilters()">
     <option value="">Diagnóstico</option><option value="VIABLE">Viable</option><option value="INVIABLE">Inviable</option>
   </select>
@@ -855,16 +855,20 @@ function clearAllFilters() {
   document.getElementById("search-input").value = "";
   document.getElementById("date-from").value = "";
   document.getElementById("date-to").value = "";
+  _selectedEstados.clear();
   document.querySelectorAll(".legend-item").forEach(function(el){ el.classList.remove("active-legend"); });
   applyFilters();
 }
+
+// Multi-select estado filter: empty set = show all; non-empty = OR match.
+var _selectedEstados = new Set();
 
 // Returns true if d matches the active filters, optionally skipping one filter key
 // so that dropdown options can be computed relative to the other active filters.
 function matchesFilters(d, sel, skipKey) {
   if (skipKey !== "proyecto" && sel.proyecto && d.Proyecto_ID !== sel.proyecto) return false;
   if (skipKey !== "municipio" && sel.municipio && d.MUNICIPIO !== sel.municipio) return false;
-  if (skipKey !== "estado" && sel.estado && (d.ESTADO||"").toUpperCase() !== sel.estado.toUpperCase()) return false;
+  if (skipKey !== "estado" && sel.estadoSet && sel.estadoSet.size > 0 && !sel.estadoSet.has((d.ESTADO||"").toUpperCase())) return false;
   if (skipKey !== "diagnostico" && sel.diagnostico && (d.DIAGNOSTICO||"").toUpperCase() !== sel.diagnostico.toUpperCase()) return false;
   if (skipKey !== "date" && (sel.fromDate || sel.toDate)) {
     var visita = parseSheetDate(d["FECHA VISITA INICIAL"] || d["FECHA_VISITA_INICIAL"] || d.FECHA);
@@ -885,12 +889,25 @@ function getCurrentSelection() {
   return {
     proyecto: document.getElementById("sel-proyecto").value,
     municipio: document.getElementById("sel-municipio").value,
-    estado: document.getElementById("sel-estado").value,
+    estadoSet: new Set(_selectedEstados),
     diagnostico: document.getElementById("sel-diagnostico").value,
     search: (document.getElementById("search-input").value||"").toLowerCase(),
     fromDate: fromStr ? new Date(fromStr+"T00:00:00") : null,
     toDate: toStr ? new Date(toStr+"T23:59:59") : null
   };
+}
+
+function onEstadoSelectChange() {
+  var val = document.getElementById("sel-estado").value;
+  _selectedEstados.clear();
+  if (val) _selectedEstados.add(val.toUpperCase());
+  applyFilters();
+}
+
+function toggleEstadoLegend(key) {
+  if (_selectedEstados.has(key)) _selectedEstados.delete(key);
+  else _selectedEstados.add(key);
+  applyFilters();
 }
 
 function applyFilters() {
@@ -925,18 +942,25 @@ function populateFilters(data, sel) {
   var selEst=document.getElementById("sel-estado");
   selEst.innerHTML='<option value="">Todos los estados</option>';
   Object.keys(estados).sort().forEach(function(e){ var o=document.createElement("option");o.value=e;o.textContent=e+" ("+estados[e]+")";selEst.appendChild(o); });
-  if (sel.estado && estados[sel.estado.toUpperCase()]) selEst.value = sel.estado;
-  else if (sel.estado) { selEst.value = ""; sel.estado = ""; }
+  if (sel.estadoSet.size === 1) {
+    var only = Array.from(sel.estadoSet)[0];
+    selEst.value = estados[only] ? only : "";
+  } else {
+    selEst.value = "";
+  }
 
   var legend=document.getElementById("estado-legend"); legend.innerHTML="";
   Object.keys(ESTADO_CONFIG).forEach(function(key){
     if(key==="EN EJECUCION")return;
     var cfg=ESTADO_CONFIG[key]; var item=document.createElement("div"); item.className="legend-item";
     item.innerHTML='<div class="legend-dot" style="background:'+cfg.color+';"></div>'+key;
-    if (sel.estado && sel.estado.toUpperCase() === key) item.classList.add("active-legend");
-    item.onclick=function(){ document.getElementById("sel-estado").value=item.classList.contains("active-legend")?"":key;
-      document.querySelectorAll(".legend-item").forEach(function(el){el.classList.remove("active-legend");});
-      if(document.getElementById("sel-estado").value)item.classList.add("active-legend"); applyFilters(); };
+    if (sel.estadoSet.has(key)) {
+      item.classList.add("active-legend");
+      item.style.background = cfg.bg; item.style.borderColor = cfg.color;
+      item.style.color = cfg.text; item.style.fontWeight = "800";
+      item.style.boxShadow = "0 0 0 1px " + cfg.color;
+    }
+    item.onclick = function(){ toggleEstadoLegend(key); };
     legend.appendChild(item);
   });
 }
