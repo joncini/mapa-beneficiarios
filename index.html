@@ -281,6 +281,15 @@ var ESTADO_CONFIG = {
 };
 var DEFAULT_ESTADO = {color:"#64748b", icon:"&#x2B24;", bg:"#f1f5f9", border:"#cbd5e1", text:"#334155"};
 
+// Normalizes ESTADO text variants from the sheet (e.g. "STAND BY", "EJECUCION")
+// to the canonical ESTADO_CONFIG key so colors/legend counts stay consistent.
+function normalizeEstado(raw) {
+  var s = (raw || "").toUpperCase().trim();
+  if (s === "STAND BY") return "EN STAND BY";
+  if (s === "EJECUCION" || s === "EJECUCIÓN") return "EN EJECUCIÓN";
+  return s;
+}
+
 var ALL_DATA = [], _filtered = [], _map, _markers = [];
 var _routeLayer = null, _routeOriginMarker = null;
 var _allRoutesLayer = null, _allOriginsLayer = null;
@@ -331,7 +340,7 @@ function parseDMS(coordStr) {
 }
 
 function createMarkerIcon(estado) {
-  var cfg = ESTADO_CONFIG[(estado || "").toUpperCase()] || DEFAULT_ESTADO;
+  var cfg = ESTADO_CONFIG[normalizeEstado(estado)] || DEFAULT_ESTADO;
   var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="40" viewBox="0 0 30 40">' +
     '<defs><filter id="s" x="-20%" y="-10%" width="140%" height="130%">' +
     '<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity=".25"/></filter></defs>' +
@@ -508,7 +517,7 @@ function getRouteInfo(d) {
 }
 
 function buildPopup(d) {
-  var cfg = ESTADO_CONFIG[(d.ESTADO || "").toUpperCase()] || DEFAULT_ESTADO;
+  var cfg = ESTADO_CONFIG[normalizeEstado(d.ESTADO)] || DEFAULT_ESTADO;
   var estado = d.ESTADO || "Sin estado";
   var route = getRouteInfo(d);
   var routeHtml = '';
@@ -658,7 +667,7 @@ function renderTableModal() {
 
   body.innerHTML = rows.map(function(r) {
     var d = r.d;
-    var cfg = ESTADO_CONFIG[(d.ESTADO || "").toUpperCase()] || DEFAULT_ESTADO;
+    var cfg = ESTADO_CONFIG[normalizeEstado(d.ESTADO)] || DEFAULT_ESTADO;
     var centerTxt = r.center ? fmtCoord(r.center.lat, r.center.lng) : '<span style="color:#94a3b8;">Sin centro</span>';
     var coordTxt = r.coord ? fmtCoord(r.coord.lat, r.coord.lng) : '<span style="color:#94a3b8;">Sin coordenadas</span>';
     var distTxt = r.distanceKm != null ? r.distanceKm.toFixed(2) + (r.estimated ? " *" : "") : "—";
@@ -733,7 +742,7 @@ function openPanel(idFichaEnc) {
   _currentPanelData = d;
   clearRoute();
 
-  var cfg = ESTADO_CONFIG[(d.ESTADO || "").toUpperCase()] || DEFAULT_ESTADO;
+  var cfg = ESTADO_CONFIG[normalizeEstado(d.ESTADO)] || DEFAULT_ESTADO;
   document.getElementById("sp-title").textContent = d["NOMBRE BENEFICIARIO"] || "—";
   document.getElementById("sp-subtitle").textContent = [d.VEREDA, d.MUNICIPIO].filter(Boolean).join(", ");
   var v = function(val) { return val || '<span class="empty">Sin datos</span>'; };
@@ -920,11 +929,14 @@ function applyFilters() {
 
 function populateFilters(data, sel) {
   sel = sel || getCurrentSelection();
-  var proyectos={},municipios={},estados={};
+  var proyectos={},municipios={},estados={},estadosNorm={};
   data.forEach(function(d){
     if(d.Proyecto_ID && matchesFilters(d, sel, "proyecto")) proyectos[d.Proyecto_ID]=(proyectos[d.Proyecto_ID]||0)+1;
     if(d.MUNICIPIO && matchesFilters(d, sel, "municipio")) municipios[d.MUNICIPIO]=(municipios[d.MUNICIPIO]||0)+1;
-    if(d.ESTADO && matchesFilters(d, sel, "estado")) estados[(d.ESTADO||"").toUpperCase()]=(estados[(d.ESTADO||"").toUpperCase()]||0)+1;
+    if(d.ESTADO && matchesFilters(d, sel, "estado")) {
+      estados[(d.ESTADO||"").toUpperCase()]=(estados[(d.ESTADO||"").toUpperCase()]||0)+1;
+      estadosNorm[normalizeEstado(d.ESTADO)]=(estadosNorm[normalizeEstado(d.ESTADO)]||0)+1;
+    }
   });
 
   var selProy=document.getElementById("sel-proyecto");
@@ -953,14 +965,8 @@ function populateFilters(data, sel) {
   Object.keys(ESTADO_CONFIG).forEach(function(key){
     if(key==="EN EJECUCION")return;
     var cfg=ESTADO_CONFIG[key]; var item=document.createElement("div"); item.className="legend-item";
-    item.innerHTML='<div class="legend-dot" style="background:'+cfg.color+';"></div>'+key;
-    if (sel.estadoSet.has(key)) {
-      item.classList.add("active-legend");
-      item.style.background = cfg.bg; item.style.borderColor = cfg.color;
-      item.style.color = cfg.text; item.style.fontWeight = "800";
-      item.style.boxShadow = "0 0 0 1px " + cfg.color;
-    }
-    item.onclick = function(){ toggleEstadoLegend(key); };
+    item.style.cursor="default";
+    item.innerHTML='<div class="legend-dot" style="background:'+cfg.color+';"></div>'+key+' ('+(estadosNorm[key]||0)+')';
     legend.appendChild(item);
   });
 }
