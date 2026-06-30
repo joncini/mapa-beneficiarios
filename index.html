@@ -228,6 +228,7 @@
   </div>
   <button onclick="clearAllFilters()" title="Quitar todos los filtros" style="display:flex;align-items:center;gap:4px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;">&#x2715; Quitar filtros</button>
   <div class="estado-legend" id="estado-legend"></div>
+  <div class="estado-legend" id="municipio-legend" style="border-left:1px solid var(--border);padding-left:8px;margin-left:4px;"></div>
 </div>
 
 <div class="main">
@@ -277,7 +278,7 @@ var ESTADO_CONFIG = {
   "EN EJECUCION":  {color:"#d97706", icon:"&#x1F6A7;", bg:"#fef3c7", border:"#fcd34d", text:"#92400e"},
   "EN STAND BY":   {color:"#7c3aed", icon:"&#x23F8;",  bg:"#ede9fe", border:"#c4b5fd", text:"#5b21b6"},
   "EJECUTADO":     {color:"#0891b2", icon:"&#x2705;",  bg:"#cffafe", border:"#67e8f9", text:"#155e75"},
-  "FACTURADO":     {color:"#059669", icon:"&#x1F4B0;", bg:"#d1fae5", border:"#6ee7b7", text:"#065f46"},
+  "FACTURADO":     {color:"#db2777", icon:"&#x1F4B0;", bg:"#fce7f3", border:"#f9a8d4", text:"#9d174d"},
 };
 var DEFAULT_ESTADO = {color:"#64748b", icon:"&#x2B24;", bg:"#f1f5f9", border:"#cbd5e1", text:"#334155"};
 
@@ -288,6 +289,26 @@ function normalizeEstado(raw) {
   if (s === "STAND BY") return "EN STAND BY";
   if (s === "EJECUCION" || s === "EJECUCIÓN") return "EN EJECUCIÓN";
   return s;
+}
+
+// ── MUNICIPIO COLORS ──
+var MUNI_PALETTE = [
+  "#e63946","#2a9d8f","#e9c46a","#264653","#f4a261",
+  "#8338ec","#06d6a0","#fb5607","#3a86ff","#ffbe0b",
+  "#d62828","#023e8a","#6a994e","#9b2226","#0077b6",
+  "#c77dff","#ff006e","#8ecae6"
+];
+var _muniColorMap = {};
+var _muniColorIndex = 0;
+
+function getMunicipioColor(muni) {
+  if (!muni) return "#64748b";
+  var key = muni.toUpperCase();
+  if (!_muniColorMap[key]) {
+    _muniColorMap[key] = MUNI_PALETTE[_muniColorIndex % MUNI_PALETTE.length];
+    _muniColorIndex++;
+  }
+  return _muniColorMap[key];
 }
 
 var ALL_DATA = [], _filtered = [], _map, _markers = [];
@@ -339,13 +360,14 @@ function parseDMS(coordStr) {
   return {lat: latD, lng: lngD};
 }
 
-function createMarkerIcon(estado) {
+function createMarkerIcon(estado, municipio) {
   var cfg = ESTADO_CONFIG[normalizeEstado(estado)] || DEFAULT_ESTADO;
+  var muniColor = getMunicipioColor(municipio);
   var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="40" viewBox="0 0 30 40">' +
     '<defs><filter id="s" x="-20%" y="-10%" width="140%" height="130%">' +
     '<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity=".25"/></filter></defs>' +
     '<path d="M15 0C6.72 0 0 6.72 0 15c0 11.25 15 25 15 25s15-13.75 15-25C30 6.72 23.28 0 15 0z" ' +
-    'fill="' + cfg.color + '" filter="url(#s)"/>' +
+    'fill="' + muniColor + '" filter="url(#s)"/>' +
     '<circle cx="15" cy="14" r="7" fill="#fff"/>' +
     '<circle cx="15" cy="14" r="4" fill="' + cfg.color + '"/>' +
     '</svg>';
@@ -805,7 +827,7 @@ function renderMarkers(data) {
   data.forEach(function(d) {
     var coord = parseDMS(d.COORDENADAS);
     if (!coord) return;
-    var marker = L.marker([coord.lat, coord.lng], { icon: createMarkerIcon(d.ESTADO) }).addTo(_map);
+    var marker = L.marker([coord.lat, coord.lng], { icon: createMarkerIcon(d.ESTADO, d.MUNICIPIO) }).addTo(_map);
     marker.bindPopup(buildPopup(d), {maxWidth:300});
     marker._benefData = d;
     bounds.push([coord.lat, coord.lng]);
@@ -968,6 +990,14 @@ function populateFilters(data, sel) {
     item.style.cursor="default";
     item.innerHTML='<div class="legend-dot" style="background:'+cfg.color+';"></div>'+key+' ('+(estadosNorm[key]||0)+')';
     legend.appendChild(item);
+  });
+
+  var muniLegend=document.getElementById("municipio-legend"); muniLegend.innerHTML="";
+  Object.keys(municipios).sort().forEach(function(muni){
+    var color=getMunicipioColor(muni);
+    var item=document.createElement("div"); item.className="legend-item"; item.style.cursor="default";
+    item.innerHTML='<div class="legend-dot" style="background:'+color+';"></div>'+muni+' ('+municipios[muni]+')';
+    muniLegend.appendChild(item);
   });
 }
 
