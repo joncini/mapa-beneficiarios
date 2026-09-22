@@ -268,7 +268,22 @@ var MUNI_CENTERS = {
   "VEGACHI":  {lat: 6.7739, lng: -74.8006},
   "REMEDIOS": {lat: 7.0286, lng: -74.6947},
   "SEGOVIA":  {lat: 7.0836, lng: -74.7003},
+  "URAMITA":  {lat: 6.8983, lng: -76.1739},
+  "YALI":     {lat: 6.6769, lng: -74.8408},
+  "YALÍ":     {lat: 6.6769, lng: -74.8408},
 };
+
+// Warns in console about municipios in the sheet with no casco urbano defined
+// (those beneficiarios get a marker but no route/distance).
+function checkMissingCenters(data) {
+  var missing = {};
+  data.forEach(function(d){
+    var m = (d.MUNICIPIO || "").toUpperCase().trim();
+    if (m && !MUNI_CENTERS[m]) missing[m] = (missing[m] || 0) + 1;
+  });
+  var keys = Object.keys(missing);
+  if (keys.length) console.warn("Municipios sin casco urbano en MUNI_CENTERS:", missing);
+}
 
 var ESTADO_CONFIG = {
   "VISITADO":      {color:"#3b82f6", icon:"&#x1F4CD;", bg:"#dbeafe", border:"#93c5fd", text:"#1e40af"},
@@ -314,7 +329,7 @@ function getMunicipioColor(muni) {
 var ALL_DATA = [], _filtered = [], _map, _markers = [];
 var _routeLayer = null, _routeOriginMarker = null;
 var _allRoutesLayer = null, _allOriginsLayer = null;
-var _routeCache = {};
+var _routeCache = {};  // filled from localStorage once loadRouteCache() is defined (see ROUTING)
 var PROYECTO_LABELS = {};
 
 // ── CSV PARSER ──
@@ -345,7 +360,30 @@ function parseCSV(text) {
   return records;
 }
 
+// Accepts both formats found in the sheet:
+//   decimal: "7.248306, -74.973806"  (also "7.24 -74.97" or "7.24;-74.97")
+//   DMS:     7°14'53.9"N 74°58'25.7"W
+// Returns null if the point falls outside Colombia (catches typos/swapped values).
 function parseDMS(coordStr) {
+  var c = parseDecimalCoord(coordStr) || parseDMSStrict(coordStr);
+  if (!c) return null;
+  if (c.lat < -5 || c.lat > 14 || c.lng < -82 || c.lng > -66) {
+    // Try swapped lat/lng before giving up
+    if (c.lng >= -5 && c.lng <= 14 && c.lat >= -82 && c.lat <= -66) return {lat: c.lng, lng: c.lat};
+    console.warn("Coordenada fuera de rango:", coordStr);
+    return null;
+  }
+  return c;
+}
+
+function parseDecimalCoord(coordStr) {
+  if (!coordStr) return null;
+  var m = String(coordStr).trim().match(/^(-?\d{1,3}\.\d+)\s*[,;\s]\s*(-?\d{1,3}\.\d+)$/);
+  if (!m) return null;
+  return {lat: parseFloat(m[1]), lng: parseFloat(m[2])};
+}
+
+function parseDMSStrict(coordStr) {
   if (!coordStr) return null;
   var s = coordStr.replace(/\s+/g, " ").trim();
   s = s.replace(/[‘’´`′]/g, "'");
@@ -382,14 +420,76 @@ function createOriginIcon() {
 }
 
 // ── ROUTING (OSRM) ──
-function fetchRoute(fromLat, fromLng, toLat, toLng, callback) {
+// The public OSRM demo server allows ~1 request/second. Requests are queued
+// and sent one at a time so 700+ viviendas don't get the page rate-limited (HTTP 429).
+var _osrmQueue = [], _osrmBusy = false, _osrmGen = 0, _osrmPending = {};
+var OSRM_DELAY_MS = 1100;
+
+function fetchRoute(fromLat, fromLng, toLat, toLng, callback, priority) {
   var url = "https://router.project-osrm.org/route/v1/driving/" +
-    fromLng + "," + fromLat + ";" + toLng + "," + toLat +
-    "?overview=full&geometries=geojson&steps=true";
-  fetch(url).then(function(r){ return r.json(); }).then(function(data){
-    if (data.code === "Ok" && data.routes && data.routes.length) callback(null, data.routes[0]);
-    else callback("Sin ruta disponible");
-  }).catch(function(e){ callback("Error de conexión: " + e.message); });
+      fromLng + "," + fromLat + ";" + toLng + "," + toLat +
+      "?overview=full&geometries=geojson&steps=true";
+  var existing = _osrmPending[url];
+  if (existing) {                       // same route already queued: share the result
+    existing.cbs.push(callback);
+    if (priority || existing.gen === -1) existing.gen = -1; else existing.gen = _osrmGen;
+    if (priority) { var i = _osrmQueue.indexOf(existing); if (i > 0) { _osrmQueue.splice(i,1); _osrmQueue.unshift(existing); } }
+    return;
+  }
+  var job = { url: url, cbs: [callback], gen: priority ? -1 : _osrmGen, tries: 0 };
+  _osrmPending[url] = job;
+  if (priority) _osrmQueue.unshift(job); else _osrmQueue.push(job);
+  pumpOsrm();
+}
+
+function finishJob(job, err, route) {
+  delete _osrmPending[job.url];
+  job.cbs.forEach(function(cb){ try { cb(err, route); } catch(e) { console.error(e); } });
+  if (!err) saveRouteCache();
+}
+
+function pumpOsrm() {
+  if (_osrmBusy) return;
+  // Drop jobs from an older drawAllRoutes() call (filters changed meanwhile)
+  while (_osrmQueue.length && _osrmQueue[0].gen !== -1 && _osrmQueue[0].gen !== _osrmGen) {
+    delete _osrmPending[_osrmQueue.shift().url];
+  }
+  var job = _osrmQueue.shift();
+  if (!job) return;
+  _osrmBusy = true;
+  fetch(job.url).then(function(r){
+    if (r.status === 429) throw { retry: true };
+    return r.json();
+  }).then(function(data){
+    if (data.code === "Ok" && data.routes && data.routes.length) finishJob(job, null, data.routes[0]);
+    else finishJob(job, "Sin ruta disponible");
+  }).catch(function(e){
+    if (e && e.retry && job.tries < 3) { job.tries++; _osrmQueue.unshift(job); return "backoff"; }
+    finishJob(job, "Error de conexión: " + (e && e.message ? e.message : "límite de peticiones"));
+  }).then(function(r){
+    // After a 429, wait longer before trying again
+    setTimeout(function(){ _osrmBusy = false; pumpOsrm(); }, r === "backoff" ? 5000 : OSRM_DELAY_MS);
+  });
+}
+
+// Persist computed routes between visits so the queue only runs for new viviendas.
+var ROUTE_CACHE_KEY = "mapaBenef_routeCache_v1";
+function loadRouteCache() {
+  try { var s = localStorage.getItem(ROUTE_CACHE_KEY); return s ? JSON.parse(s) : {}; } catch(e) { return {}; }
+}
+var _saveCacheTimer = null;
+function saveRouteCache() {
+  clearTimeout(_saveCacheTimer);
+  _saveCacheTimer = setTimeout(function(){
+    try {
+      var slim = {};
+      Object.keys(_routeCache).forEach(function(k){
+        var r = _routeCache[k];
+        slim[k] = { geometry: r.geometry, distance: r.distance, duration: r.duration };
+      });
+      localStorage.setItem(ROUTE_CACHE_KEY, JSON.stringify(slim));
+    } catch(e) { /* quota or private mode: keep in-memory only */ }
+  }, 2000);
 }
 
 function clearRoute() {
@@ -404,6 +504,7 @@ function clearAllRoutes() {
 
 function drawAllRoutes(data) {
   clearAllRoutes();
+  _osrmGen++;  // cancels queued route requests from the previous filter selection
   _allRoutesLayer = L.layerGroup().addTo(_map);
   _allOriginsLayer = L.layerGroup().addTo(_map);
   var originsAdded = {};
@@ -514,8 +615,12 @@ function showRoute(d) {
 
     updateRouteUI(html);
   };
-  if (_routeCache[cacheKey]) cb(null, _routeCache[cacheKey].raw || _routeCache[cacheKey]);
-  else fetchRoute(center.lat, center.lng, coord.lat, coord.lng, cb);
+  // Saved cache has no road detail (legs); fetch it first in the queue when the user asks for it
+  if (_routeCache[cacheKey] && _routeCache[cacheKey].raw) cb(null, _routeCache[cacheKey].raw);
+  else fetchRoute(center.lat, center.lng, coord.lat, coord.lng, function(err, route){
+    if (!err && route) _routeCache[cacheKey] = { geometry: route.geometry, distance: route.distance, duration: route.duration, raw: route };
+    cb(err, route);
+  }, true);
 }
 
 function updateRouteUI(content) {
@@ -1011,16 +1116,22 @@ function updateStats(data) {
   document.getElementById("st-municipios").textContent=Object.keys(municipios).length;
 }
 
-function loadData() {
-  document.getElementById("loading").classList.remove("hidden");
+var _lastCsv = null;
+function loadData(auto) {
+  if (!auto) document.getElementById("loading").classList.remove("hidden");
   fetch(SHEET_URL).then(function(r){return r.text();}).then(function(csv){
+    // Auto-refresh with unchanged data: don't re-render (it would restart the route queue)
+    if (auto && csv === _lastCsv) { document.getElementById("loading").classList.add("hidden"); return; }
+    _lastCsv = csv;
     var parsed = parseCSV(csv);
     ALL_DATA = parsed.filter(function(d){ return d.COORDENADAS && d.COORDENADAS.trim(); });
     ALL_COLUMNS = parsed.length ? Object.keys(parsed[0]) : (ALL_DATA[0] ? Object.keys(ALL_DATA[0]) : []);
     PROYECTO_LABELS = {};
     ALL_DATA.forEach(function(d){ if(d.Proyecto_ID && d.CTTO && !PROYECTO_LABELS[d.Proyecto_ID]) PROYECTO_LABELS[d.Proyecto_ID]=d.CTTO; });
+    checkMissingCenters(ALL_DATA);
     populateFilters(ALL_DATA); _filtered=ALL_DATA; renderMarkers(ALL_DATA); updateStats(ALL_DATA);
     document.getElementById("loading").classList.add("hidden");
+    applyUrlParams();
   }).catch(function(err){
     console.error("Error cargando datos:",err);
     document.getElementById("loading").querySelector(".loading-text").textContent="Error al cargar datos. Verifica que el Sheet sea público.";
@@ -1029,18 +1140,65 @@ function loadData() {
 
 function reloadData() { closePanel(); loadData(); }
 
-function initMap() {
-  _map = L.map("map", { center:[6.8,-75.5], zoom:8, zoomControl:true });
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-    attribution:'&copy; <a href="https://carto.com/">CARTO</a> &middot; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-    maxZoom:19, subdomains:"abcd"
-  }).addTo(_map);
+// ── DEEP LINK desde AppSheet ──
+// Parametros soportados:
+//   ?id=<ID_FICHA>   abre esa vivienda (zoom + ficha lateral)
+//   ?muni=<MUNICIPIO> filtra por municipio
+//   ?q=<texto>        precarga el buscador
+var _urlParamsAplicados = false;
+function applyUrlParams() {
+  if (_urlParamsAplicados) return;
+  _urlParamsAplicados = true;
+  var p = new URLSearchParams(location.search);
+  var id = (p.get("id") || "").trim();
+  var muni = (p.get("muni") || "").trim();
+  var q = (p.get("q") || "").trim();
+
+  if (muni) {
+    var sel = document.getElementById("sel-municipio");
+    for (var i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value.toUpperCase() === muni.toUpperCase()) { sel.value = sel.options[i].value; break; }
+    }
+  }
+  if (q) document.getElementById("search-input").value = q;
+  if (muni || q) applyFilters();
+
+  if (id) {
+    var d = ALL_DATA.filter(function(x){ return String(x.ID_FICHA || "").trim() === id; })[0];
+    if (!d) {
+      document.getElementById("loading").classList.add("hidden");
+      alert("No se encontró la ficha \"" + id + "\" en el mapa.\n\nPuede que aún no tenga coordenadas registradas.");
+      return;
+    }
+    var c = parseDMS(d.COORDENADAS);
+    if (c) _map.setView([c.lat, c.lng], 16);
+    for (var j = 0; j < _markers.length; j++) {
+      if (_markers[j]._benefData && _markers[j]._benefData.ID_FICHA === d.ID_FICHA) { _markers[j].openPopup(); break; }
+    }
+    openPanel(encodeURIComponent(d.ID_FICHA));
+  }
 }
 
+function initMap() {
+  _map = L.map("map", { center:[6.8,-75.5], zoom:8, zoomControl:true });
+  // CARTO basemaps started requiring an API key (Sep 2026) -> keyless providers.
+  var calles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom:19
+  });
+  var satelite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    attribution:'Imágenes &copy; Esri, Maxar, Earthstar Geographics',
+    maxZoom:19
+  });
+  calles.addTo(_map);
+  L.control.layers({ "Calles": calles, "Satélite": satelite }, null, { position:"topright" }).addTo(_map);
+}
+
+_routeCache = loadRouteCache();
 loadColumnConfig();
 initMap();
 loadData();
-setInterval(function(){ loadData(); }, 5*60*1000);
+setInterval(function(){ loadData(true); }, 5*60*1000);
 </script>
 </body>
 </html>
