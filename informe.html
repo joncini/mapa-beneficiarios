@@ -211,8 +211,21 @@
 <script>
 var SHEET_ID = "1XO5fl4hqh7iREDY6cTLpZoLkqJBUhk5-6nWWEpkOE08";
 var SHEET_NAME = "01_Beneficiario";
+var SHEET_GID = "0";  // gid de la pestaña 01_Beneficiario
+// /export devuelve la hoja COMPLETA; /gviz solo las filas visibles de un filtro (incidente 23-sep-2026)
 var SHEET_URL = "https://docs.google.com/spreadsheets/d/" + SHEET_ID +
+                "/export?format=csv&gid=" + SHEET_GID;
+var SHEET_URL_RESPALDO = "https://docs.google.com/spreadsheets/d/" + SHEET_ID +
                 "/gviz/tq?tqx=out:csv&sheet=" + encodeURIComponent(SHEET_NAME);
+function fetchCsv(url) {
+  return fetch(url, { cache: "no-store" }).then(function(r){
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  }).then(function(t){
+    if (/^\s*</.test(t)) throw new Error("la respuesta no es CSV (¿el Sheet dejó de ser público?)");
+    return t;
+  });
+}
 
 var COLORS = ["#2563eb","#16a34a","#dc2626","#d97706","#7c3aed","#0891b2","#059669","#db2777","#0ea5e9","#84cc16","#f59e0b","#8b5cf6"];
 var ALL_DATA = [], PROYECTO_LABELS = {}, _charts = {};
@@ -477,7 +490,10 @@ function populateFilters() {
 
 function loadData() {
   document.getElementById("loading").classList.remove("hidden");
-  fetch(SHEET_URL).then(function(r){return r.text();}).then(function(csv){
+  fetchCsv(SHEET_URL).catch(function(e){
+    console.warn("Fallo /export, intento /gviz:", e);
+    return fetchCsv(SHEET_URL_RESPALDO);
+  }).then(function(csv){
     ALL_DATA = parseCSV(csv);
     PROYECTO_LABELS = {};
     ALL_DATA.forEach(function(d){
