@@ -231,6 +231,8 @@
   <div class="estado-legend" id="municipio-legend" style="border-left:1px solid var(--border);padding-left:8px;margin-left:4px;"></div>
 </div>
 
+<div id="aviso-datos" style="display:none;background:#fef3c7;border-bottom:1px solid #fcd34d;color:#92400e;padding:8px 24px;font-size:12px;line-height:1.4;flex-shrink:0;z-index:450;"></div>
+
 <div class="main">
   <div id="map"></div>
   <div class="side-panel" id="side-panel">
@@ -245,7 +247,12 @@
 <script>
 var SHEET_ID = "1XO5fl4hqh7iREDY6cTLpZoLkqJBUhk5-6nWWEpkOE08";
 var SHEET_NAME = "01_Beneficiario";
+var SHEET_GID = "0";  // gid de la pestaña 01_Beneficiario (no cambia si la renombran)
+// /export devuelve la hoja COMPLETA. /gviz solo devuelve las filas visibles: si alguien
+// deja un filtro puesto en la hoja, el mapa queda vacio (incidente 23-sep-2026: 33 de 1.775 filas).
 var SHEET_URL = "https://docs.google.com/spreadsheets/d/" + SHEET_ID +
+                "/export?format=csv&gid=" + SHEET_GID;
+var SHEET_URL_RESPALDO = "https://docs.google.com/spreadsheets/d/" + SHEET_ID +
                 "/gviz/tq?tqx=out:csv&sheet=" + encodeURIComponent(SHEET_NAME);
 
 // ── MUNICIPALITY CENTERS (casco urbano) ──
@@ -473,9 +480,21 @@ function pumpOsrm() {
 }
 
 // Persist computed routes between visits so the queue only runs for new viviendas.
-var ROUTE_CACHE_KEY = "mapaBenef_routeCache_v1";
+// v2: geometria simplificada (max 80 puntos, 5 decimales). La v1 guardaba la ruta completa
+// y llenaba el almacenamiento del navegador (~5 MB), bloqueando cualquier otro respaldo.
+var ROUTE_CACHE_KEY = "mapaBenef_routeCache_v2";
+var ROUTE_MAX_PUNTOS = 80;
 function loadRouteCache() {
+  try { localStorage.removeItem("mapaBenef_routeCache_v1"); } catch(e) {}
   try { var s = localStorage.getItem(ROUTE_CACHE_KEY); return s ? JSON.parse(s) : {}; } catch(e) { return {}; }
+}
+function simplificarGeometria(g) {
+  if (!g || !g.coordinates || !g.coordinates.length) return g;
+  var c = g.coordinates, paso = Math.max(1, Math.ceil(c.length / ROUTE_MAX_PUNTOS)), out = [];
+  for (var i = 0; i < c.length; i += paso) out.push([+c[i][0].toFixed(5), +c[i][1].toFixed(5)]);
+  var u = c[c.length - 1];
+  out.push([+u[0].toFixed(5), +u[1].toFixed(5)]);
+  return { type: g.type, coordinates: out };
 }
 var _saveCacheTimer = null;
 function saveRouteCache() {
@@ -485,7 +504,7 @@ function saveRouteCache() {
       var slim = {};
       Object.keys(_routeCache).forEach(function(k){
         var r = _routeCache[k];
-        slim[k] = { geometry: r.geometry, distance: r.distance, duration: r.duration };
+        slim[k] = { geometry: simplificarGeometria(r.geometry), distance: Math.round(r.distance), duration: Math.round(r.duration) };
       });
       localStorage.setItem(ROUTE_CACHE_KEY, JSON.stringify(slim));
     } catch(e) { /* quota or private mode: keep in-memory only */ }
@@ -1116,10 +1135,81 @@ function updateStats(data) {
   document.getElementById("st-municipios").textContent=Object.keys(municipios).length;
 }
 
+// ── CARGA DE DATOS BLINDADA ──
+// 1) Lee /export (ignora filtros). 2) Si falla, intenta /gviz. 3) Si la respuesta trae
+// muchas menos viviendas que la ultima carga buena (filtro, borrado masivo, Sheet privado),
+// NO vacia el mapa: muestra la ultima carga buena y un aviso visible.
 var _lastCsv = null;
+var LAST_GOOD_KEY = "mapaBenef_lastGood_v1";
+var CAIDA_MAXIMA = 0.5;  // si llegan menos del 50% de las viviendas de la ultima carga buena -> sospechoso
+
+function fetchCsv(url) {
+  return fetch(url, { cache: "no-store" }).then(function(r){
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  }).then(function(t){
+    if (/^\s*</.test(t)) throw new Error("la respuesta no es CSV (¿el Sheet dejó de ser público?)");
+    return t;
+  });
+}
+
+function contarConCoord(parsed) {
+  return parsed.filter(function(d){ return d.COORDENADAS && d.COORDENADAS.trim(); }).length;
+}
+
+function leerUltimaBuena() {
+  try { var s = localStorage.getItem(LAST_GOOD_KEY); return s ? JSON.parse(s) : null; } catch(e) { return null; }
+}
+
+function guardarUltimaBuena(csv, n) {
+  var val = JSON.stringify({ csv: csv, n: n, t: Date.now() });
+  try { localStorage.setItem(LAST_GOOD_KEY, val); return; } catch(e) {}
+  // Sin espacio: el respaldo de datos vale mas que el cache de rutas (se recalcula solo)
+  try { localStorage.removeItem(ROUTE_CACHE_KEY); localStorage.setItem(LAST_GOOD_KEY, val); } catch(e) {}
+}
+
+function mostrarAviso(html) {
+  var el = document.getElementById("aviso-datos");
+  if (!el) return;
+  if (!html) { el.style.display = "none"; el.innerHTML = ""; return; }
+  el.innerHTML = html; el.style.display = "block";
+}
+
+function fmtFecha(ms) {
+  return new Date(ms).toLocaleString("es-CO", {day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"});
+}
+
+// Devuelve {csv, aviso} con la mejor fuente disponible
+function obtenerCsvSeguro() {
+  var buena = leerUltimaBuena();
+  return fetchCsv(SHEET_URL).catch(function(e1){
+    console.warn("Fallo /export, intento /gviz:", e1);
+    return fetchCsv(SHEET_URL_RESPALDO);
+  }).then(function(csv){
+    var n = contarConCoord(parseCSV(csv));
+    if (buena && buena.n >= 20 && n < buena.n * CAIDA_MAXIMA) {
+      console.warn("Datos sospechosos: " + n + " viviendas vs " + buena.n + " en la ultima carga buena");
+      return { csv: buena.csv, aviso: "&#9888; El Sheet devolvió solo <b>" + n + "</b> viviendas con coordenadas (la última carga buena tenía <b>" +
+        buena.n + "</b>). Se muestra la última carga buena (" + fmtFecha(buena.t) +
+        "). Revisa si alguien borró filas, dejó un filtro o cambió permisos en <b>01_Beneficiario</b>." };
+    }
+    if (n > 0) guardarUltimaBuena(csv, n);
+    return { csv: csv, aviso: null };
+  }).catch(function(err){
+    if (buena) {
+      console.error("Sin conexion con el Sheet, uso ultima carga buena:", err);
+      return { csv: buena.csv, aviso: "&#9888; No se pudo leer el Sheet (" + (err && err.message ? err.message : err) +
+        "). Se muestra la última carga buena (" + fmtFecha(buena.t) + ")." };
+    }
+    throw err;
+  });
+}
+
 function loadData(auto) {
   if (!auto) document.getElementById("loading").classList.remove("hidden");
-  fetch(SHEET_URL).then(function(r){return r.text();}).then(function(csv){
+  obtenerCsvSeguro().then(function(res){
+    var csv = res.csv;
+    mostrarAviso(res.aviso);
     // Auto-refresh with unchanged data: don't re-render (it would restart the route queue)
     if (auto && csv === _lastCsv) { document.getElementById("loading").classList.add("hidden"); return; }
     _lastCsv = csv;
